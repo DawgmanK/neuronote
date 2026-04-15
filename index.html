@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0a0004" />
+<title>NEURONOTE // Meeting OS</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="apple-touch-icon" sizes="512x512" href="icon-512.png" />
+<link rel="icon" type="image/png" href="icon-192.png" />
+<style>
+  :root{
+    --bg:#05010a;
+    --bg2:#0a0410;
+    --panel:rgba(18,4,14,.72);
+    --panel-solid:#120410;
+    --red:#ff0033;
+    --red-dim:#8a0020;
+    --white:#f3f4f8;
+    --mute:#7a6b78;
+    --line:rgba(255,0,51,.22);
+    --glow:0 0 18px rgba(255,0,51,.55);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg);color:var(--white);font-family:"JetBrains Mono","Fira Code",ui-monospace,Menlo,Consolas,monospace;font-size:14px;letter-spacing:.02em}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(255,0,51,.12), transparent 60%),
+      radial-gradient(800px 500px at -10% 110%, rgba(180,0,40,.09), transparent 60%),
+      linear-gradient(180deg,#05010a 0%, #0a0410 60%, #05010a 100%);
+    position:fixed;inset:0;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+  /* scanlines */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:999;
+    background:repeating-linear-gradient(to bottom, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
+    mix-blend-mode:overlay;
+  }
+  /* vignette + noise */
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:998;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%);
+  }
+  .app{position:relative;height:100%;width:100%;max-width:520px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden}
+
+  /* TOP BAR */
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 18px 10px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(10,4,16,.85), rgba(10,4,16,0));
+    backdrop-filter: blur(8px);
+    position:relative;z-index:3;
+  }
+  .logo{display:flex;align-items:center;gap:10px}
+  .logo-mark{
+    width:28px;height:28px;border:1px solid var(--red);display:grid;place-items:center;
+    color:var(--red);font-weight:900;position:relative;
+    box-shadow:var(--glow), inset 0 0 8px rgba(255,0,51,.3);
+  }
+  .logo-mark::after{content:"";position:absolute;inset:-3px;border:1px solid rgba(255,0,51,.3);clip-path:polygon(0 0,10px 0,0 10px,0 0,100% 0,100% 10px,calc(100% - 10px) 0);}
+  .logo-text{font-weight:800;letter-spacing:.22em;font-size:13px}
+  .logo-text .sub{color:var(--mute);font-weight:500;letter-spacing:.3em;font-size:10px;display:block;margin-top:1px}
+  .status{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--mute);letter-spacing:.2em}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--red);box-shadow:0 0 10px var(--red);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* SCREENS */
+  .screens{position:relative;flex:1;overflow:hidden}
+  .screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:16px 16px 100px;transform:translateX(100%);transition:transform .35s cubic-bezier(.7,.1,.2,1);opacity:0;pointer-events:none}
+  .screen.active{transform:translateX(0);opacity:1;pointer-events:auto}
+  .screen.prev{transform:translateX(-30%);opacity:0}
+  .screen::-webkit-scrollbar{width:4px}
+  .screen::-webkit-scrollbar-thumb{background:var(--red-dim)}
+
+  /* BOTTOM NAV */
+  .nav{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:0;
+    border-top:1px solid var(--line);
+    background:linear-gradient(0deg, rgba(8,2,12,.95), rgba(8,2,12,.75));
+    backdrop-filter:blur(10px);
+    padding:8px 6px calc(8px + env(safe-area-inset-bottom));
+    position:relative;z-index:3;
+  }
+  .nav button{
+    background:transparent;border:0;color:var(--mute);padding:8px 4px;
+    font-family:inherit;font-size:9px;letter-spacing:.22em;
+    display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;
+    transition:color .2s;
+  }
+  .nav button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6}
+  .nav button.active{color:var(--red);text-shadow:0 0 8px rgba(255,0,51,.6)}
+  .nav button.active svg{filter:drop-shadow(0 0 6px rgba(255,0,51,.8))}
+
+  /* SHARED UI */
+  h1.title{font-size:22px;font-weight:800;letter-spacing:.08em;margin:10px 0 4px;position:relative;display:inline-block}
+  h1.title::after{content:"";position:absolute;left:0;bottom:-6px;width:40px;height:2px;background:var(--red);box-shadow:var(--glow)}
+  .sub-title{color:var(--mute);font-size:11px;letter-spacing:.2em;margin:0 0 20px}
+
+  .card{
+    background:var(--panel);
+    border:1px solid var(--line);
+    padding:14px;margin-bottom:12px;
+    position:relative;
+    backdrop-filter:blur(6px);
+    clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  }
+  .card::before{
+    content:"";position:absolute;top:0;right:0;width:14px;height:14px;
+    background:linear-gradient(225deg, var(--red) 0%, var(--red) 50%, transparent 50%);
+    opacity:.8;
+  }
+  .card.empty{text-align:center;color:var(--mute);padding:40px 20px}
+  .card-title{font-weight:700;letter-spacing:.05em;margin:0 0 4px;font-size:13px;color:var(--white)}
+  .card-meta{color:var(--mute);font-size:10px;letter-spacing:.18em;text-transform:uppercase}
+  .card-excerpt{color:#b8a8b0;font-size:12px;margin-top:8px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+  .btn{
+    background:transparent;color:var(--white);
+    border:1px solid var(--red);
+    padding:12px 18px;font-family:inherit;font-size:11px;letter-spacing:.22em;font-weight:700;
+    cursor:pointer;position:relative;text-transform:uppercase;
+    transition:all .2s;
+  }
+  .btn:hover, .btn:active{background:var(--red);color:#fff;box-shadow:var(--glow)}
+  .btn.ghost{border-color:var(--line);color:var(--mute)}
+  .btn.ghost:hover{border-color:var(--red);color:var(--white)}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap}
+
+  input, textarea{
+    background:rgba(0,0,0,.35);border:1px solid var(--line);color:var(--white);
+    padding:12px;font-family:inherit;font-size:13px;width:100%;outline:none;
+    transition:border .2s;
+  }
+  input:focus, textarea:focus{border-color:var(--red);box-shadow:0 0 0 1px var(--red), var(--glow)}
+  label{display:block;font-size:10px;letter-spacing:.22em;color:var(--mute);margin:14px 0 6px;text-transform:uppercase}
+
+  /* RECORD SCREEN */
+  .rec-wrap{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:20px;gap:24px}
+  .viz{
+    width:100%;height:180px;position:relative;
+    border:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(255,0,51,.05), rgba(0,0,0,.4));
+    overflow:hidden;
+  }
+  .viz canvas{width:100%;height:100%;display:block}
+  .viz::before{content:"REC // SIGNAL";position:absolute;top:8px;left:10px;font-size:9px;letter-spacing:.25em;color:var(--red);z-index:2}
+  .viz::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,.25) 2px 4px);pointer-events:none}
+
+  .timer{
+    font-size:52px;font-weight:300;letter-spacing:.1em;
+    color:var(--white);text-shadow:0 0 20px rgba(255,0,51,.5);
+    font-variant-numeric:tabular-nums;
+    position:relative;
+  }
+  .timer.glitch{animation:glitch .3s infinite}
+  @keyframes glitch{
+    0%,100%{text-shadow:0 0 20px rgba(255,0,51,.5)}
+    20%{text-shadow:2px 0 0 var(--red), -2px 0 0 #00ffff, 0 0 20px rgba(255,0,51,.5)}
+    40%{text-shadow:-2px 0 0 var(--red), 2px 0 0 #fff, 0 0 20px rgba(255,0,51,.5)}
+  }
+
+  .rec-btn{
+    width:110px;height:110px;border-radius:50%;
+    border:2px solid var(--red);
+    background:radial-gradient(circle at 50% 50%, var(--red) 0%, var(--red-dim) 60%, #2a0008 100%);
+    color:#fff;cursor:pointer;
+    box-shadow:var(--glow), inset 0 0 20px rgba(0,0,0,.4);
+    position:relative;transition:transform .15s, box-shadow .3s;
+    font-family:inherit;font-weight:800;letter-spacing:.2em;font-size:11px;
+  }
+  .rec-btn::after{
+    content:"";position:absolute;inset:-8px;border:1px solid var(--red);border-radius:50%;
+    opacity:.5;animation:ring 2s infinite;
+  }
+  @keyframes ring{0%{transform:scale(1);opacity:.6}100%{transform:scale(1.25);opacity:0}}
+  .rec-btn:active{transform:scale(.95)}
+  .rec-btn.recording{animation:recPulse 1.2s infinite}
+  @keyframes recPulse{0%,100%{box-shadow:0 0 20px rgba(255,0,51,.6)}50%{box-shadow:0 0 40px rgba(255,0,51,.9), 0 0 60px rgba(255,0,51,.4)}}
+  .rec-btn.paused{background:radial-gradient(circle, #333 0%, #111 100%);border-color:#666}
+
+  .rec-label{text-align:center;color:var(--mute);font-size:10px;letter-spacing:.3em;text-transform:uppercase}
+  .rec-label.live{color:var(--red)}
+
+  /* TABS */
+  .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--line);margin-bottom:16px}
+  .tabs button{
+    background:transparent;border:0;border-right:1px solid var(--line);
+    color:var(--mute);padding:10px 4px;font-family:inherit;font-size:9px;letter-spacing:.18em;
+    cursor:pointer;text-transform:uppercase;
+  }
+  .tabs button:last-child{border-right:0}
+  .tabs button.active{background:var(--red);color:#fff;text-shadow:0 0 6px rgba(255,255,255,.4)}
+
+  .transcript-line{padding:10px 0;border-bottom:1px dashed var(--line);font-size:13px;line-height:1.6;color:#d8c8d0}
+  .transcript-line .t{color:var(--red);font-size:9px;letter-spacing:.2em;margin-right:8px}
+
+  /* FLASHCARD */
+  .flash-stack{perspective:1000px;min-height:260px;position:relative;margin:10px 0 20px}
+  .flash{
+    width:100%;min-height:220px;cursor:pointer;position:relative;
+    transform-style:preserve-3d;transition:transform .6s cubic-bezier(.5,.1,.3,1);
+  }
+  .flash.flipped{transform:rotateY(180deg)}
+  .flash-face{
+    position:absolute;inset:0;backface-visibility:hidden;
+    border:1px solid var(--line);background:var(--panel);
+    padding:24px;display:flex;flex-direction:column;justify-content:center;align-items:center;
+    text-align:center;font-size:15px;line-height:1.5;
+    clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+  }
+  .flash-face.back{transform:rotateY(180deg);border-color:var(--red);background:linear-gradient(180deg, rgba(255,0,51,.08), var(--panel))}
+  .flash-face .tag{position:absolute;top:10px;left:14px;font-size:9px;letter-spacing:.25em;color:var(--red)}
+  .flash-face .hint{position:absolute;bottom:10px;font-size:9px;letter-spacing:.2em;color:var(--mute)}
+  .flash-nav{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  .flash-nav .counter{font-size:11px;letter-spacing:.2em;color:var(--mute)}
+
+  /* QUIZ */
+  .q-block{border:1px solid var(--line);padding:14px;margin-bottom:12px;background:var(--panel)}
+  .q-num{font-size:10px;letter-spacing:.25em;color:var(--red);margin-bottom:6px}
+  .q-text{font-size:14px;margin-bottom:12px;line-height:1.5}
+  .q-opt{
+    display:block;width:100%;text-align:left;background:rgba(0,0,0,.35);border:1px solid var(--line);
+    color:var(--white);padding:10px 12px;margin-bottom:6px;font-family:inherit;font-size:12px;cursor:pointer;
+    transition:all .15s;
+  }
+  .q-opt:hover{border-color:var(--red)}
+  .q-opt.correct{border-color:#00ff88;background:rgba(0,255,136,.1);color:#00ff88}
+  .q-opt.wrong{border-color:var(--red);background:rgba(255,0,51,.12)}
+  .q-opt.disabled{cursor:default;pointer-events:none}
+  .q-score{text-align:center;padding:20px;font-size:24px;letter-spacing:.15em;color:var(--red);text-shadow:var(--glow)}
+
+  /* SETTINGS */
+  .setting-row{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px dashed var(--line)}
+  .setting-row .lbl{font-size:12px}
+  .setting-row .desc{font-size:10px;color:var(--mute);margin-top:2px;letter-spacing:.1em}
+  .toggle{width:44px;height:22px;background:#222;border:1px solid var(--line);position:relative;cursor:pointer}
+  .toggle::after{content:"";position:absolute;top:1px;left:1px;width:18px;height:18px;background:var(--mute);transition:all .2s}
+  .toggle.on{border-color:var(--red);background:rgba(255,0,51,.15)}
+  .toggle.on::after{left:23px;background:var(--red);box-shadow:var(--glow)}
+
+  /* LOADER */
+  .loader{display:flex;align-items:center;gap:10px;color:var(--red);font-size:11px;letter-spacing:.2em;padding:20px 0}
+  .loader .bar{flex:1;height:2px;background:var(--line);overflow:hidden;position:relative}
+  .loader .bar::after{content:"";position:absolute;top:0;left:0;height:100%;width:40%;background:var(--red);box-shadow:var(--glow);animation:slide 1.2s infinite}
+  @keyframes slide{0%{left:-40%}100%{left:100%}}
+
+  /* TOAST */
+  .toast{
+    position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(100px);
+    background:var(--panel-solid);border:1px solid var(--red);color:var(--white);
+    padding:12px 18px;font-size:11px;letter-spacing:.15em;z-index:500;
+    box-shadow:var(--glow);transition:transform .3s;
+  }
+  .toast.show{transform:translateX(-50%) translateY(0)}
+
+  /* GLITCH TEXT */
+  .glitch-txt{position:relative;display:inline-block}
+  .glitch-txt::before, .glitch-txt::after{
+    content:attr(data-text);position:absolute;top:0;left:0;width:100%;overflow:hidden;
+  }
+  .glitch-txt::before{color:var(--red);clip-path:polygon(0 0,100% 0,100% 33%,0 33%);animation:g1 3s infinite linear alternate-reverse}
+  .glitch-txt::after{color:#00d4ff;clip-path:polygon(0 67%,100% 67%,100% 100%,0 100%);animation:g2 2s infinite linear alternate-reverse}
+  @keyframes g1{0%,100%{transform:translate(0)}50%{transform:translate(-2px,1px)}}
+  @keyframes g2{0%,100%{transform:translate(0)}50%{transform:translate(2px,-1px)}}
+
+  .badge{display:inline-block;padding:2px 8px;border:1px solid var(--line);font-size:9px;letter-spacing:.2em;color:var(--mute)}
+  .badge.live{color:var(--red);border-color:var(--red);animation:pulse 1.4s infinite}
+
+  .corner-deco{position:absolute;width:12px;height:12px;border:1px solid var(--red);opacity:.6}
+  .corner-deco.tl{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .corner-deco.tr{top:-1px;right:-1px;border-left:0;border-bottom:0}
+  .corner-deco.bl{bottom:-1px;left:-1px;border-right:0;border-top:0}
+  .corner-deco.br{bottom:-1px;right:-1px;border-left:0;border-top:0}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-mark">N</div>
+      <div class="logo-text">NEURONOTE<span class="sub">MEETING OS v1.0</span></div>
+    </div>
+    <div class="status"><span class="dot"></span><span id="statusText">ONLINE</span></div>
+  </div>
+
+  <!-- SCREENS -->
+  <div class="screens">
+
+    <!-- HOME / LIST -->
+    <div class="screen active" data-screen="home">
+      <h1 class="title glitch-txt" data-text="ARCHIVE">ARCHIVE</h1>
+      <p class="sub-title">// ENCRYPTED LOCAL STORAGE</p>
+      <div id="meetingList"></div>
+    </div>
+
+    <!-- RECORD -->
+    <div class="screen" data-screen="record">
+      <h1 class="title glitch-txt" data-text="CAPTURE">CAPTURE</h1>
+      <p class="sub-title">// NEURAL SIGNAL INTAKE</p>
+
+      <div class="rec-wrap">
+        <div class="viz"><canvas id="viz"></canvas></div>
+        <div class="timer" id="timer">00:00:00</div>
+        <button class="rec-btn" id="recBtn">START</button>
+        <div class="rec-label" id="recLabel">TAP TO INITIATE</div>
+        <button class="btn ghost" id="pauseBtn" style="display:none">&#10074;&#10074; PAUSE</button>
+
+        <div style="width:100%;margin-top:12px">
+          <label>SESSION LABEL</label>
+          <input id="sessionTitle" placeholder="Acme Corp cold call // John D." />
+        </div>
+      </div>
+    </div>
+
+    <!-- DETAIL -->
+    <div class="screen" data-screen="detail">
+      <button class="btn ghost" style="padding:6px 12px;font-size:10px;margin-bottom:12px" onclick="showScreen('home')">&larr; BACK</button>
+      <h1 class="title" id="detailTitle">—</h1>
+      <p class="sub-title" id="detailMeta">—</p>
+
+      <div class="tabs">
+        <button class="active" data-tab="summary">SUMMARY</button>
+        <button data-tab="transcript">TRANSCRIPT</button>
+        <button data-tab="cards">CARDS</button>
+        <button data-tab="quiz">QUIZ</button>
+      </div>
+
+      <div id="tab-summary" class="tab-panel"></div>
+      <div id="tab-transcript" class="tab-panel" style="display:none"></div>
+      <div id="tab-cards" class="tab-panel" style="display:none"></div>
+      <div id="tab-quiz" class="tab-panel" style="display:none"></div>
+
+      <div class="btn-row" style="margin-top:20px">
+        <button class="btn ghost" id="regenBtn">&#x21bb; REGENERATE</button>
+        <button class="btn ghost" id="exportBtn">EXPORT</button>
+        <button class="btn ghost" id="deleteBtn" style="border-color:var(--red);color:var(--red)">DELETE</button>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="screen" data-screen="settings">
+      <h1 class="title glitch-txt" data-text="SYSTEM">SYSTEM</h1>
+      <p class="sub-title">// CONFIGURATION</p>
+
+      <div class="card">
+        <div class="card-title">AI ENGINE</div>
+        <div class="card-meta" style="margin-top:4px">OPENAI INTEGRATION</div>
+        <label>API KEY (stored locally)</label>
+        <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
+        <div class="card-meta" style="margin-top:10px;text-transform:none;letter-spacing:.08em;line-height:1.6">
+          Without a key, transcription uses your device's free Web Speech API and summary/cards/quiz use a local extractive engine. With a key, the app upgrades to Whisper + GPT-4o quality.
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn" id="saveKey">SAVE KEY</button>
+          <button class="btn ghost" id="clearKey">CLEAR</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">TRANSCRIPTION MODE</div>
+        <div class="setting-row">
+          <div>
+            <div class="lbl">USE WHISPER (requires key)</div>
+            <div class="desc">Higher accuracy, handles noise</div>
+          </div>
+          <div class="toggle" id="toggleWhisper"></div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="lbl">LIVE ON-SCREEN TRANSCRIPT</div>
+            <div class="desc">Show text as you speak</div>
+          </div>
+          <div class="toggle on" id="toggleLive"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">DATA</div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn ghost" id="exportAll">EXPORT ALL JSON</button>
+          <button class="btn ghost" id="wipeAll" style="border-color:var(--red);color:var(--red)">WIPE ARCHIVE</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">INSTALL</div>
+        <div class="card-meta" style="margin-top:6px;text-transform:none;letter-spacing:.06em;line-height:1.6;color:#b8a8b0">
+          iPhone: tap Share &rarr; Add to Home Screen.<br>
+          Android: tap menu &rarr; Install app / Add to Home screen.
+        </div>
+      </div>
+
+      <div class="card" style="text-align:center;color:var(--mute);font-size:10px;letter-spacing:.2em">
+        NEURONOTE v1.0 // BUILD 2026.04
+      </div>
+    </div>
+
+  </div>
+
+  <!-- NAV -->
+  <div class="nav">
+    <button data-go="home" class="active">
+      <svg viewBox="0 0 24 24"><path d="M4 10l8-6 8 6v10a1 1 0 0 1-1 1h-4v-7h-6v7H5a1 1 0 0 1-1-1V10z"/></svg>
+      ARCHIVE
+    </button>
+    <button data-go="record">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>
+      CAPTURE
+    </button>
+    <button data-go="detail" id="navDetail" style="opacity:.4">
+      <svg viewBox="0 0 24 24"><path d="M4 5h16M4 10h16M4 15h10M4 20h16"/></svg>
+      SESSION
+    </button>
+    <button data-go="settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+      SYSTEM
+    </button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ STATE ============ */
+const STORE_KEY = 'neuronote.v1';
+const SETTINGS_KEY = 'neuronote.settings';
+let state = { meetings: [] };
+let settings = { apiKey:'', useWhisper:false, liveTranscript:true };
+let current = null; // currently viewed meeting
+let recorder = null, mediaStream = null, audioChunks = [], recStart = 0, timerInt = null, pausedTotal = 0;
+let speechRec = null, liveBuffer = '';
+let lastFinalTs = 0, speakerIdx = 1, pausedAt = 0, isPaused = false;
+let audioCtx = null, analyser = null, rafId = null;
+
+/* ============ STORAGE ============ */
+function load(){
+  try{ state = JSON.parse(localStorage.getItem(STORE_KEY)) || { meetings: [] }; }catch(e){ state = { meetings: [] }; }
+  try{ settings = Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); }catch(e){}
+}
+function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function saveSettings(){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+
+/* ============ UI HELPERS ============ */
+function toast(msg, ms=2200){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>t.classList.remove('show'), ms);
+}
+function showScreen(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  const el = document.querySelector(`.screen[data-screen="${name}"]`);
+  if(el) el.classList.add('active');
+  document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active', b.dataset.go===name));
+  if(name==='home') renderList();
+}
+document.querySelectorAll('.nav button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    if(b.dataset.go==='detail' && !current){ toast('NO SESSION SELECTED'); return; }
+    showScreen(b.dataset.go);
+  });
+});
+
+/* ============ HOME / LIST ============ */
+function renderList(){
+  const wrap = document.getElementById('meetingList');
+  if(state.meetings.length===0){
+    wrap.innerHTML = `<div class="card empty">
+      <div style="font-size:40px;color:var(--red);opacity:.4;margin-bottom:12px">&#x25C9;</div>
+      <div style="letter-spacing:.2em;font-size:12px">NO SIGNALS CAPTURED</div>
+      <div style="font-size:10px;margin-top:10px;letter-spacing:.15em">Initiate first recording via CAPTURE node</div>
+    </div>`;
+    return;
+  }
+  wrap.innerHTML = state.meetings.slice().reverse().map(m=>`
+    <div class="card" onclick="openMeeting('${m.id}')">
+      <div class="card-title">${escapeHtml(m.title || 'UNTITLED SESSION')}</div>
+      <div class="card-meta">${formatDate(m.date)} // ${formatDuration(m.duration)} // ${m.transcript? (m.transcript.split(/\s+/).length+' WORDS') : 'PENDING'}</div>
+      ${m.summary ? `<div class="card-excerpt">${escapeHtml(m.summary.slice(0,160))}</div>` : '<div class="card-excerpt" style="color:var(--red)">// AWAITING AI PROCESSING</div>'}
+    </div>
+  `).join('');
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function formatDate(ts){ const d = new Date(ts); return d.toLocaleDateString(undefined,{month:'short',day:'2-digit'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+function formatDuration(s){ s=Math.floor(s||0); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60; return (h?h+'H ':'')+m+'M '+sec+'S'; }
+function formatTimer(s){ s=Math.floor(s); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60; return [h,m,sec].map(n=>String(n).padStart(2,'0')).join(':'); }
+
+window.openMeeting = function(id){
+  current = state.meetings.find(m=>m.id===id);
+  if(!current) return;
+  document.getElementById('navDetail').style.opacity = 1;
+  renderDetail();
+  showScreen('detail');
+};
+
+/* ============ RECORDING ============ */
+const recBtn = document.getElementById('recBtn');
+const recLabel = document.getElementById('recLabel');
+const timerEl = document.getElementById('timer');
+
+async function startRecording(){
+  try{
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true }});
+  }catch(e){
+    toast('MIC ACCESS DENIED'); return;
+  }
+  audioChunks = [];
+  liveBuffer = '';
+  try{
+    recorder = new MediaRecorder(mediaStream);
+    recorder.ondataavailable = e=>{ if(e.data.size>0) audioChunks.push(e.data); };
+    recorder.onstop = onRecStop;
+    recorder.start(1000);
+  }catch(e){ toast('RECORDER INIT FAILED'); return; }
+
+  // Web Speech live transcript
+  if(settings.liveTranscript){
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(SR){
+      try{
+        speechRec = new SR();
+        speechRec.continuous = true;
+        speechRec.interimResults = true;
+        speechRec.lang = navigator.language || 'en-US';
+        window._srResultHandler = e=>{
+          let final = '';
+          for(let i=e.resultIndex;i<e.results.length;i++){
+            if(e.results[i].isFinal) final += e.results[i][0].transcript + ' ';
+          }
+          if(final){
+            const now = Date.now();
+            if(lastFinalTs && (now - lastFinalTs) > 2500){
+              speakerIdx = speakerIdx === 1 ? 2 : 1;
+              liveBuffer += `\n[SPEAKER ${speakerIdx}] `;
+            } else if(!lastFinalTs){
+              liveBuffer += `[SPEAKER ${speakerIdx}] `;
+            }
+            liveBuffer += final;
+            lastFinalTs = now;
+          }
+        };
+        speechRec.onresult = window._srResultHandler;
+        speechRec.onerror = ()=>{ /* ignore; mic recording continues */ };
+        speechRec.onend = ()=>{ if(recorder && recorder.state==='recording'){ try{ speechRec.start(); }catch(e){} } };
+        speechRec.start();
+      }catch(e){}
+    }
+  }
+
+  // Visualizer
+  try{
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(mediaStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    drawViz();
+  }catch(e){}
+
+  recStart = Date.now();
+  pausedTotal = 0;
+  timerInt = setInterval(()=>{
+    const s = (Date.now() - recStart - pausedTotal)/1000;
+    timerEl.textContent = formatTimer(s);
+  }, 250);
+
+  recBtn.textContent = 'STOP';
+  recBtn.classList.add('recording');
+  recLabel.textContent = '// LIVE SIGNAL';
+  recLabel.classList.add('live');
+  timerEl.classList.add('glitch');
+  document.getElementById('statusText').textContent = 'REC';
+  document.getElementById('pauseBtn').style.display = 'inline-block';
+  document.getElementById('pauseBtn').innerHTML = '&#10074;&#10074; PAUSE';
+  isPaused = false;
+  lastFinalTs = 0;
+  speakerIdx = 1;
+}
+
+function togglePause(){
+  if(!recorder) return;
+  if(!isPaused){
+    try{ recorder.pause(); }catch(e){}
+    if(speechRec){ try{ speechRec.onend=null; speechRec.stop(); }catch(e){} }
+    pausedAt = Date.now();
+    isPaused = true;
+    document.getElementById('pauseBtn').innerHTML = '&#9654; RESUME';
+    recBtn.classList.remove('recording');
+    recBtn.classList.add('paused');
+    recLabel.textContent = '// PAUSED';
+    timerEl.classList.remove('glitch');
+  } else {
+    try{ recorder.resume(); }catch(e){}
+    pausedTotal += (Date.now() - pausedAt);
+    if(settings.liveTranscript){
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if(SR){
+        try{
+          speechRec = new SR();
+          speechRec.continuous = true;
+          speechRec.interimResults = true;
+          speechRec.lang = navigator.language || 'en-US';
+          speechRec.onresult = window._srResultHandler;
+          speechRec.onend = ()=>{ if(recorder && recorder.state==='recording'){ try{ speechRec.start(); }catch(e){} } };
+          speechRec.start();
+        }catch(e){}
+      }
+    }
+    isPaused = false;
+    document.getElementById('pauseBtn').innerHTML = '&#10074;&#10074; PAUSE';
+    recBtn.classList.add('recording');
+    recBtn.classList.remove('paused');
+    recLabel.textContent = '// LIVE SIGNAL';
+    timerEl.classList.add('glitch');
+  }
+}
+document.getElementById('pauseBtn').addEventListener('click', togglePause);
+
+function stopRecording(){
+  if(!recorder) return;
+  if(recorder.state !== 'inactive') recorder.stop();
+  if(speechRec){ try{ speechRec.onend=null; speechRec.stop(); }catch(e){} speechRec=null; }
+  if(mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); }
+  if(audioCtx){ try{audioCtx.close();}catch(e){}; audioCtx=null; analyser=null; }
+  if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+  clearInterval(timerInt);
+  recBtn.textContent = 'START';
+  recBtn.classList.remove('recording');
+  recLabel.textContent = 'TAP TO INITIATE';
+  recLabel.classList.remove('live');
+  timerEl.classList.remove('glitch');
+  document.getElementById('statusText').textContent = 'ONLINE';
+  document.getElementById('pauseBtn').style.display = 'none';
+  recBtn.classList.remove('paused');
+}
+
+async function onRecStop(){
+  const duration = (Date.now() - recStart - pausedTotal)/1000;
+  const blob = new Blob(audioChunks, { type: recorder.mimeType || 'audio/webm' });
+  const titleInput = document.getElementById('sessionTitle').value.trim();
+  const meeting = {
+    id: 'm_'+Date.now(),
+    title: titleInput || ('Session '+new Date().toLocaleString()),
+    date: Date.now(),
+    duration,
+    audioSize: blob.size,
+    transcript: liveBuffer.trim(),
+    summary: '',
+    keyPoints: [],
+    flashcards: [],
+    quiz: [],
+    processed: false
+  };
+  document.getElementById('sessionTitle').value = '';
+  timerEl.textContent = '00:00:00';
+
+  toast('SESSION CAPTURED // PROCESSING');
+
+  // Try Whisper if enabled + key present
+  if(settings.useWhisper && settings.apiKey){
+    try{
+      const text = await whisperTranscribe(blob, settings.apiKey);
+      if(text) meeting.transcript = text;
+    }catch(e){ toast('WHISPER FAIL // USING LIVE TRANSCRIPT'); }
+  }
+
+  // Generate AI artifacts
+  await generateArtifacts(meeting);
+
+  state.meetings.push(meeting);
+  save();
+  current = meeting;
+  document.getElementById('navDetail').style.opacity = 1;
+  renderDetail();
+  showScreen('detail');
+}
+
+recBtn.addEventListener('click', ()=>{
+  if(recorder && recorder.state==='recording'){ stopRecording(); }
+  else { startRecording(); }
+});
+
+/* ============ VISUALIZER ============ */
+function drawViz(){
+  const canvas = document.getElementById('viz');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  function resize(){
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+  }
+  resize();
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  function tick(){
+    rafId = requestAnimationFrame(tick);
+    analyser.getByteFrequencyData(buf);
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    // bars
+    const bars = 48;
+    const bw = w / bars;
+    for(let i=0;i<bars;i++){
+      const v = buf[Math.floor(i*buf.length/bars)] / 255;
+      const bh = Math.max(2*dpr, v*h*0.9);
+      const y = (h - bh)/2;
+      const grad = ctx.createLinearGradient(0, y, 0, y+bh);
+      grad.addColorStop(0, 'rgba(255,0,51,0.95)');
+      grad.addColorStop(1, 'rgba(255,0,51,0.2)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(i*bw + bw*0.15, y, bw*0.7, bh);
+    }
+    // centerline
+    ctx.fillStyle = 'rgba(255,255,255,.15)';
+    ctx.fillRect(0, h/2 - 1, w, 1*dpr);
+  }
+  tick();
+}
+
+/* ============ AI: WHISPER ============ */
+async function whisperTranscribe(blob, key){
+  const fd = new FormData();
+  fd.append('file', blob, 'audio.webm');
+  fd.append('model', 'whisper-1');
+  const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method:'POST',
+    headers:{ 'Authorization': 'Bearer '+key },
+    body: fd
+  });
+  if(!r.ok) throw new Error('whisper failed');
+  const j = await r.json();
+  return j.text || '';
+}
+
+/* ============ AI: GPT or LOCAL ============ */
+async function generateArtifacts(meeting){
+  const txt = meeting.transcript;
+  if(!txt || txt.length < 10){
+    meeting.summary = 'No transcript captured. Re-record in a quieter environment or enable Whisper in System settings.';
+    meeting.keyPoints = [];
+    meeting.flashcards = [];
+    meeting.quiz = [];
+    meeting.processed = true;
+    return;
+  }
+  if(settings.apiKey){
+    try{
+      const res = await gptGenerate(txt, settings.apiKey);
+      meeting.summary = res.summary || localSummary(txt);
+      meeting.keyPoints = res.keyPoints || localKeyPoints(txt);
+      meeting.flashcards = res.flashcards || localFlashcards(txt);
+      meeting.quiz = res.quiz || localQuiz(txt);
+    }catch(e){
+      toast('GPT FAIL // LOCAL FALLBACK');
+      meeting.summary = localSummary(txt);
+      meeting.keyPoints = localKeyPoints(txt);
+      meeting.flashcards = localFlashcards(txt);
+      meeting.quiz = localQuiz(txt);
+    }
+  }else{
+    meeting.summary = localSummary(txt);
+    meeting.keyPoints = localKeyPoints(txt);
+    meeting.flashcards = localFlashcards(txt);
+    meeting.quiz = localQuiz(txt);
+  }
+  meeting.processed = true;
+}
+
+async function gptGenerate(text, key){
+  const prompt = `You are a meeting intelligence engine. Given the transcript, return JSON with:
+- "summary": 3-5 sentence executive summary
+- "keyPoints": array of 4-7 short bullet strings
+- "flashcards": array of 6-10 objects { "front": "question or term", "back": "answer or definition" }
+- "quiz": array of 5 objects { "question": "...", "options": ["A","B","C","D"], "answerIndex": 0-3 }
+Focus on facts, decisions, and action items. Quiz must be answerable from transcript only.
+TRANSCRIPT:
+"""${text.slice(0, 12000)}"""`;
+  const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    method:'POST',
+    headers:{ 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
+    body: JSON.stringify({
+      model:'gpt-4o-mini',
+      response_format:{ type:'json_object' },
+      messages:[
+        { role:'system', content:'You output strict JSON only.' },
+        { role:'user', content: prompt }
+      ],
+      temperature: 0.4
+    })
+  });
+  if(!r.ok) throw new Error('gpt failed');
+  const j = await r.json();
+  const content = j.choices[0].message.content;
+  return JSON.parse(content);
+}
+
+/* ============ LOCAL NLP FALLBACK ============ */
+const STOP = new Set("a an the and or but if then else for to of in on at by with from as is are was were be been being have has had do does did not no i you he she it we they them this that these those my your his her its our their can will would should could may might about into over under up down out so than there here what which who whom whose when where why how just only very really".split(" "));
+
+function sentences(t){ return t.replace(/\s+/g,' ').split(/(?<=[.!?])\s+/).filter(s=>s.trim().length>2); }
+function words(t){ return t.toLowerCase().replace(/[^a-z0-9'\s]/g,' ').split(/\s+/).filter(w=>w && !STOP.has(w)); }
+
+function localSummary(t){
+  const sents = sentences(t);
+  if(sents.length<=3) return sents.join(' ');
+  const freq = {};
+  words(t).forEach(w=>freq[w]=(freq[w]||0)+1);
+  const scored = sents.map((s,i)=>{
+    const ws = words(s);
+    let score = ws.reduce((a,w)=>a+(freq[w]||0),0) / Math.max(1,ws.length);
+    // light positional bias
+    if(i < sents.length*0.2) score *= 1.15;
+    return { s, i, score };
+  }).sort((a,b)=>b.score-a.score).slice(0, Math.min(5, Math.ceil(sents.length*0.25)));
+  scored.sort((a,b)=>a.i-b.i);
+  return scored.map(x=>x.s).join(' ');
+}
+function localKeyPoints(t){
+  const freq = {};
+  words(t).forEach(w=>freq[w]=(freq[w]||0)+1);
+  const top = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,20).map(x=>x[0]);
+  const sents = sentences(t);
+  const picks = [];
+  for(const term of top){
+    const match = sents.find(s=>s.toLowerCase().includes(term) && !picks.includes(s));
+    if(match){ picks.push(match.trim()); if(picks.length>=6) break; }
+  }
+  return picks;
+}
+function localFlashcards(t){
+  const sents = sentences(t);
+  const freq = {};
+  words(t).forEach(w=>freq[w]=(freq[w]||0)+1);
+  const keyTerms = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,12).map(x=>x[0]);
+  const cards = [];
+  for(const term of keyTerms){
+    const s = sents.find(s=>s.toLowerCase().includes(term));
+    if(s){
+      cards.push({ front: 'What was mentioned about "'+term+'"?', back: s.trim() });
+      if(cards.length>=8) break;
+    }
+  }
+  return cards;
+}
+function localQuiz(t){
+  const sents = sentences(t);
+  const quiz = [];
+  const used = new Set();
+  const freq = {};
+  words(t).forEach(w=>freq[w]=(freq[w]||0)+1);
+  const pool = Object.entries(freq).filter(([w,c])=>c>=2 && w.length>3).sort((a,b)=>b[1]-a[1]).slice(0,30).map(x=>x[0]);
+  for(const s of sents){
+    if(quiz.length>=5) break;
+    const tokens = s.split(/\s+/);
+    const kwIdx = tokens.findIndex(tok=>{
+      const w = tok.toLowerCase().replace(/[^a-z0-9']/g,'');
+      return pool.includes(w) && !used.has(w);
+    });
+    if(kwIdx<0) continue;
+    const raw = tokens[kwIdx].replace(/[^a-zA-Z0-9'\-]/g,'');
+    if(!raw) continue;
+    used.add(raw.toLowerCase());
+    const blanked = tokens.map((tok,i)=> i===kwIdx ? '_____' : tok).join(' ');
+    const distractors = pool.filter(p=>p!==raw.toLowerCase()).sort(()=>Math.random()-0.5).slice(0,3);
+    const options = [raw, ...distractors];
+    const shuffled = options.slice().sort(()=>Math.random()-0.5);
+    quiz.push({
+      question: 'Fill in the blank: '+blanked,
+      options: shuffled,
+      answerIndex: shuffled.indexOf(raw)
+    });
+  }
+  return quiz;
+}
+
+/* ============ DETAIL ============ */
+function renderDetail(){
+  if(!current) return;
+  document.getElementById('detailTitle').textContent = current.title;
+  document.getElementById('detailMeta').textContent = '// '+formatDate(current.date)+' // '+formatDuration(current.duration);
+  renderTab('summary');
+  document.querySelectorAll('.tabs button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.tab==='summary');
+  });
+}
+document.querySelectorAll('.tabs button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    renderTab(b.dataset.tab);
+  });
+});
+function renderTab(name){
+  ['summary','transcript','cards','quiz'].forEach(n=>{
+    document.getElementById('tab-'+n).style.display = (n===name?'block':'none');
+  });
+  if(!current) return;
+  if(name==='summary'){
+    const el = document.getElementById('tab-summary');
+    const kp = (current.keyPoints||[]).map(k=>`<div style="display:flex;gap:10px;margin:6px 0"><span style="color:var(--red)">&#x25B8;</span><span style="flex:1;line-height:1.5;font-size:13px">${escapeHtml(k)}</span></div>`).join('');
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">EXECUTIVE SUMMARY</div>
+        <div style="margin-top:10px;line-height:1.65;font-size:13px;color:#d8c8d0">${escapeHtml(current.summary||'—')}</div>
+      </div>
+      ${kp ? `<div class="card"><div class="card-title">KEY POINTS</div><div style="margin-top:10px">${kp}</div></div>` : ''}
+    `;
+  }
+  if(name==='transcript'){
+    const el = document.getElementById('tab-transcript');
+    const sents = sentences(current.transcript||'');
+    el.innerHTML = `<div class="card">
+      <div class="card-title">RAW TRANSCRIPT</div>
+      <div class="card-meta" style="margin-top:4px">${sents.length} SEGMENTS // ${(current.transcript||'').split(/\s+/).filter(Boolean).length} WORDS</div>
+      <div style="margin-top:12px">
+        ${sents.length ? sents.map((s,i)=>{
+          const spk = s.match(/\[SPEAKER\s*(\d+)\]/);
+          const clean = s.replace(/\[SPEAKER\s*\d+\]\s*/g,'').trim();
+          const tag = spk ? `<span style="color:var(--red);font-weight:700;margin-right:8px">[SPK ${spk[1]}]</span>` : '';
+          return `<div class="transcript-line"><span class="t">[${String(i+1).padStart(3,'0')}]</span>${tag}${escapeHtml(clean)}</div>`;
+        }).join('') : '<div style="color:var(--mute);font-size:12px;letter-spacing:.15em">NO TRANSCRIPT DATA</div>'}
+      </div>
+    </div>`;
+  }
+  if(name==='cards'){
+    renderCards();
+  }
+  if(name==='quiz'){
+    renderQuiz();
+  }
+}
+
+/* ============ FLASHCARDS ============ */
+let cardIdx = 0;
+function renderCards(){
+  const el = document.getElementById('tab-cards');
+  const cards = current.flashcards||[];
+  if(!cards.length){
+    el.innerHTML = `<div class="card empty">NO CARDS GENERATED</div>`;
+    return;
+  }
+  cardIdx = 0;
+  el.innerHTML = `
+    <div class="flash-stack">
+      <div class="flash" id="flashEl">
+        <div class="flash-face front">
+          <span class="tag">QUERY</span>
+          <div id="flashFront"></div>
+          <span class="hint">TAP TO REVEAL</span>
+        </div>
+        <div class="flash-face back">
+          <span class="tag">RESPONSE</span>
+          <div id="flashBack"></div>
+          <span class="hint">TAP TO FLIP</span>
+        </div>
+      </div>
+    </div>
+    <div class="flash-nav">
+      <button class="btn ghost" id="prevCard">&larr; PREV</button>
+      <div class="counter" id="cardCounter"></div>
+      <button class="btn ghost" id="nextCard">NEXT &rarr;</button>
+    </div>
+  `;
+  const flashEl = document.getElementById('flashEl');
+  flashEl.addEventListener('click', ()=>flashEl.classList.toggle('flipped'));
+  document.getElementById('prevCard').onclick = ()=>{ cardIdx = (cardIdx-1+cards.length)%cards.length; updateCard(); };
+  document.getElementById('nextCard').onclick = ()=>{ cardIdx = (cardIdx+1)%cards.length; updateCard(); };
+  updateCard();
+}
+function updateCard(){
+  const cards = current.flashcards||[];
+  const c = cards[cardIdx];
+  document.getElementById('flashFront').textContent = c.front;
+  document.getElementById('flashBack').textContent = c.back;
+  document.getElementById('cardCounter').textContent = (cardIdx+1)+' / '+cards.length;
+  document.getElementById('flashEl').classList.remove('flipped');
+}
+
+/* ============ QUIZ ============ */
+function renderQuiz(){
+  const el = document.getElementById('tab-quiz');
+  const quiz = current.quiz||[];
+  if(!quiz.length){
+    el.innerHTML = `<div class="card empty">NO QUIZ GENERATED</div>`;
+    return;
+  }
+  let score = 0, answered = 0;
+  el.innerHTML = quiz.map((q,qi)=>`
+    <div class="q-block" id="q${qi}">
+      <div class="q-num">Q${String(qi+1).padStart(2,'0')} / ${String(quiz.length).padStart(2,'0')}</div>
+      <div class="q-text">${escapeHtml(q.question)}</div>
+      ${q.options.map((o,oi)=>`<button class="q-opt" data-q="${qi}" data-o="${oi}">${String.fromCharCode(65+oi)}. ${escapeHtml(o)}</button>`).join('')}
+    </div>
+  `).join('') + `<div class="q-score" id="qScore" style="display:none"></div>`;
+
+  el.querySelectorAll('.q-opt').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const qi = +btn.dataset.q, oi = +btn.dataset.o;
+      const block = document.getElementById('q'+qi);
+      if(block.dataset.done) return;
+      block.dataset.done = '1';
+      const correctIdx = quiz[qi].answerIndex;
+      block.querySelectorAll('.q-opt').forEach(b=>b.classList.add('disabled'));
+      if(oi===correctIdx){ btn.classList.add('correct'); score++; }
+      else{ btn.classList.add('wrong'); block.querySelector(`.q-opt[data-q="${qi}"][data-o="${correctIdx}"]`).classList.add('correct'); }
+      answered++;
+      if(answered===quiz.length){
+        const pct = Math.round(score*100/quiz.length);
+        const scoreEl = document.getElementById('qScore');
+        scoreEl.style.display='block';
+        scoreEl.innerHTML = `SCORE // ${score}/${quiz.length} // ${pct}%`;
+      }
+    });
+  });
+}
+
+/* ============ DETAIL ACTIONS ============ */
+document.getElementById('regenBtn').addEventListener('click', async ()=>{
+  if(!current) return;
+  toast('REGENERATING // STANDBY');
+  await generateArtifacts(current);
+  save();
+  renderDetail();
+  toast('REGENERATED');
+});
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  if(!current) return;
+  const lines = [
+    '# '+current.title,
+    '',
+    formatDate(current.date)+' // '+formatDuration(current.duration),
+    '',
+    '## Summary','',current.summary||'',
+    '','## Key Points','',
+    ...(current.keyPoints||[]).map(k=>'- '+k),
+    '','## Transcript','',current.transcript||'',
+    '','## Flashcards','',
+    ...(current.flashcards||[]).flatMap(c=>['Q: '+c.front,'A: '+c.back,'']),
+    '## Quiz','',
+    ...(current.quiz||[]).flatMap((q,i)=>[
+      `${i+1}. ${q.question}`,
+      ...q.options.map((o,oi)=>`   ${String.fromCharCode(65+oi)}. ${o}${oi===q.answerIndex?' *':''}`),
+      ''
+    ])
+  ].join('\n');
+  const blob = new Blob([lines], { type:'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (current.title||'session').replace(/[^a-z0-9]+/gi,'_')+'.md';
+  a.click();
+});
+document.getElementById('deleteBtn').addEventListener('click', ()=>{
+  if(!current) return;
+  if(!confirm('Permanently delete this session?')) return;
+  state.meetings = state.meetings.filter(m=>m.id!==current.id);
+  save();
+  current = null;
+  document.getElementById('navDetail').style.opacity = .4;
+  showScreen('home');
+  toast('SESSION PURGED');
+});
+
+/* ============ SETTINGS ============ */
+document.getElementById('saveKey').addEventListener('click', ()=>{
+  settings.apiKey = document.getElementById('apiKey').value.trim();
+  saveSettings();
+  toast(settings.apiKey ? 'KEY STORED LOCALLY' : 'KEY CLEARED');
+});
+document.getElementById('clearKey').addEventListener('click', ()=>{
+  settings.apiKey = '';
+  document.getElementById('apiKey').value='';
+  saveSettings();
+  toast('KEY CLEARED');
+});
+document.getElementById('toggleWhisper').addEventListener('click', e=>{
+  settings.useWhisper = !settings.useWhisper;
+  e.currentTarget.classList.toggle('on', settings.useWhisper);
+  saveSettings();
+});
+document.getElementById('toggleLive').addEventListener('click', e=>{
+  settings.liveTranscript = !settings.liveTranscript;
+  e.currentTarget.classList.toggle('on', settings.liveTranscript);
+  saveSettings();
+});
+document.getElementById('exportAll').addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(state,null,2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'neuronote_export_'+Date.now()+'.json';
+  a.click();
+});
+document.getElementById('wipeAll').addEventListener('click', ()=>{
+  if(!confirm('Wipe ALL sessions? This cannot be undone.')) return;
+  state = { meetings: [] };
+  save();
+  renderList();
+  toast('ARCHIVE WIPED');
+});
+
+/* ============ INIT ============ */
+function applySettingsUI(){
+  document.getElementById('apiKey').value = settings.apiKey || '';
+  document.getElementById('toggleWhisper').classList.toggle('on', !!settings.useWhisper);
+  document.getElementById('toggleLive').classList.toggle('on', !!settings.liveTranscript);
+}
+load();
+applySettingsUI();
+renderList();
+
+// PWA: register SW if we're on https (skip for file://). Harmless if it fails.
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  const swCode = `self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>self.clients.claim());self.addEventListener('fetch',()=>{});`;
+  try{
+    const blob = new Blob([swCode], { type:'text/javascript' });
+    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  }catch(e){}
+}
+</script>
+</body>
+</html>
