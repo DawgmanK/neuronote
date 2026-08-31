@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+build/
+*.local
+
+# Environment files (NEVER commit real keys)
+.env
+.env.local
+.env.*.local
+.env*
+# ...but the template with no secrets in it must ship.
+!.env.example
+
+# Vercel
+.vercel/
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.sw?
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local Claude Code artifacts
+.claude/
+
+# Personal/secret files that might exist
+google-oauth-credentials.json
+client_secret*.json
+*.pem

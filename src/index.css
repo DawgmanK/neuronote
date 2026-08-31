@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cream: #f5f0e8;
+  --color-cream-dark: #ede5d5;
+  --color-ink: #1a1a1a;
+  --color-red: #dc2626;
+  --color-red-dark: #991b1b;
+  --color-muted: #6b6b6b;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: #f5f0e8;
+  color: #1a1a1a;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* Glass morphism utilities */
+.glass {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(220, 38, 38, 0.08);
+}
+
+.glass-nav {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(220, 38, 38, 0.2);
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  border-radius: 12px;
+}
+
+/* Noise texture overlay */
+.noise-bg {
+  position: relative;
+}
+.noise-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Recording pulse animation */
+@keyframes recording-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+  50% { box-shadow: 0 0 60px 10px rgba(220, 38, 38, 0.15); }
+}
+
+.recording-pulse {
+  animation: recording-pulse 2s ease-in-out infinite;
+}
+
+/* Breathing animation for record button */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+.breathe {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+/* Status dot pulse */
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.5); }
+}
+
+.dot-pulse {
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+
+.dot-pulse-fast {
+  animation: dot-pulse 1s ease-in-out infinite;
+}
+
+/* Shimmer loading */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Typewriter shadow for headers */
+.typewriter-shadow {
+  text-shadow: 1px 1px 0 rgba(220, 38, 38, 0.08);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(220, 38, 38, 0.2);
+  border-radius: 2px;
+}
+
+/* Flashcard 3D flip */
+.perspective {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+/* Line clamp */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- v2.2.1 mobile tap targets -------------------------------------------
+   Apple's HIG minimum is 44x44pt. These grow only the hit area — the icon,
+   label, and background pill keep their existing size, so the typewriter
+   look is unchanged. Pair with `inline-flex items-center justify-center`
+   when the visual mark is smaller than the target. */
+.tap-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Primary back / dismiss controls get a little extra room. */
+.tap-target-lg {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+/* iOS safe areas: keeps headers clear of the status bar / dynamic island and
+   navs clear of the home indicator. Needs viewport-fit=cover in index.html. */
+.safe-top {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
