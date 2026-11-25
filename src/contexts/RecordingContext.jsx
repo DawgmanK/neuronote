@@ -17,7 +17,7 @@ import { getApiKey, getItem, setItem } from '../lib/storage'
 import { getActiveModel } from '../lib/models'
 import { transcribeAudio } from '../lib/assemblyai'
 import { applyCorrections } from '../lib/corrections'
-import { generateSummary, generateFlashcards, extractImageText } from '../lib/openai'
+import { generateSummary, generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
 import { extractSummary } from '../lib/extractive'
 import {
   saveInProgress,
@@ -522,7 +522,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
     // taken mid-meeting survive a tab switch.
     for (const photo of capturedPhotos || []) {
       try {
-        if (getApiKey('openai')) {
+        if (hasActiveApiKey()) {
           const ocrText = await extractImageText(photo, getActiveModel(settingsRef.current))
           text += `\n\n[PHOTO CAPTURE - ${new Date().toLocaleTimeString()}]\n${ocrText}`
         }
@@ -536,12 +536,12 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
 
     try {
       setProcessingStep('Generating summary...')
-      if (getApiKey('openai')) {
+      if (hasActiveApiKey()) {
         console.log('[NeuroNote] Calling generateSummary with', text.length, 'chars, model:', getActiveModel(settingsRef.current))
         summaryData = await generateSummary(text, getActiveModel(settingsRef.current))
         console.log('[NeuroNote] Summary result:', JSON.stringify(summaryData).slice(0, 500))
       } else {
-        console.log('[NeuroNote] No OpenAI key, using extractive fallback')
+        console.log('[NeuroNote] No AI provider key, using extractive fallback')
         summaryData = extractSummary(text)
       }
     } catch (e) {
@@ -551,7 +551,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
 
     try {
       setProcessingStep('Generating flashcards...')
-      if (getApiKey('openai')) {
+      if (hasActiveApiKey()) {
         console.log('[NeuroNote] Calling generateFlashcards...')
         flashcardData = await generateFlashcards(text)
         console.log('[NeuroNote] Flashcards result:', flashcardData?.flashcards?.length, 'cards,', flashcardData?.quiz?.length, 'quiz items')

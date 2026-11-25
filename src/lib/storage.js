@@ -47,6 +47,47 @@ export function clearApiKey(provider) {
   removeItem(`apikey:${provider}`)
 }
 
+// v2.7 — AI provider selection (OpenAI vs Gemini) and the Gemini key.
+// Plain (non-JSON) localStorage strings at the exact keys NeuroNote v2.7
+// documents, so they're easy to inspect/set from devtools too.
+const AI_PROVIDER_KEY = PREFIX + 'ai:provider'
+const GEMINI_KEY_KEY = PREFIX + 'gemini:apikey'
+
+export function getAIProvider() {
+  return localStorage.getItem(AI_PROVIDER_KEY) || 'openai'
+}
+
+export function saveAIProvider(provider) {
+  localStorage.setItem(AI_PROVIDER_KEY, provider)
+}
+
+export function getGeminiApiKey() {
+  return localStorage.getItem(GEMINI_KEY_KEY) || ''
+}
+
+export function saveGeminiApiKey(key) {
+  localStorage.setItem(GEMINI_KEY_KEY, key)
+}
+
+export function clearGeminiApiKey() {
+  localStorage.removeItem(GEMINI_KEY_KEY)
+}
+
+// v2.7.2 — the outcome of the most recent AI generation call per provider,
+// so the SYSTEM tab's API STATUS line reflects reality instead of just
+// "a key is present". Persisted so it survives a refresh.
+export function getAIStatus(provider) {
+  return getItem(`ai:status:${provider}`)
+}
+
+export function saveAIStatus(provider, status) {
+  setItem(`ai:status:${provider}`, status)
+}
+
+export function clearAIStatus(provider) {
+  removeItem(`ai:status:${provider}`)
+}
+
 export function getEmbeddings() {
   return getItem('embeddings') || []
 }

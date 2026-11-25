@@ -10,6 +10,7 @@ import {
   uploadAudio,
   requestTranscript,
   getTranscriptStatus,
+  estimateTranscriptionCost,
   applyCorrectionsToResult
 } from './assemblyai.js'
 import { addUsage } from './storage.js'
@@ -132,7 +133,7 @@ export async function transcribeSegment(segment, onUpdate) {
       report()
 
       const result = await awaitSegmentResult(transcriptId, segment.index)
-      addUsage(0.006 * (result.audio_duration || 60) / 60, 'assemblyai')
+      addUsage(estimateTranscriptionCost(result), 'assemblyai')
 
       const cleaned = applyCorrectionsToResult(result, `Segment ${segment.index}`)
       segment.transcript = cleaned.text

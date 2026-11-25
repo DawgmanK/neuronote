@@ -4,7 +4,13 @@ import GlassCard from './ui/GlassCard'
 import Toggle from './ui/Toggle'
 import CorrectionPopup from './CorrectionPopup'
 import { getApiKey, saveApiKey, clearApiKey, getMonthlyUsage, getRecentDailyUsage, clearUsage } from '../lib/storage'
-import { getDisplayName } from '../lib/models'
+import {
+  getAIProvider, saveAIProvider, getGeminiApiKey, saveGeminiApiKey, clearGeminiApiKey,
+  getAIStatus, clearAIStatus
+} from '../lib/ai-provider'
+import { getProviderDisplayName, MODEL_DISPLAY, MODEL_TERRA, MODEL_LUNA, MODEL_SOL, GEMINI_MODEL_FLASH } from '../lib/models'
+import { testOpenAIKey, testGeminiKey, testAssemblyKey } from '../lib/key-test'
+import { useRecordingContext } from '../contexts/RecordingContext'
 import { APP_VERSION } from '../lib/version'
 import { saveClientId, clearClientId, saveClientSecret, SIGNED_IN_MESSAGE } from '../services/google-auth'
 import {
@@ -19,12 +25,17 @@ import useIntegration from '../hooks/useIntegration'
 import { PROVIDERS, PROVIDER_LABELS } from '../lib/integration-provider'
 import { useToast } from './ui/Toast'
 
+// v2.7 — AI provider selector (OpenAI vs Gemini), same segmented-control
+// pattern as the Calendar & Tasks provider selector below.
+const AI_PROVIDERS = ['openai', 'gemini']
+const AI_PROVIDER_LABELS = { openai: 'OpenAI', gemini: 'Gemini' }
+
 // v2.5 — one line of copy per provider choice, shown under the selector.
 const PROVIDER_HINTS = {
   google: 'Action items go to Google Calendar and Google Tasks.',
   microsoft: 'Action items go to Outlook Calendar and Microsoft To Do.',
   both: 'Connect both, then pick a destination on each action item.',
-  none: 'Action items stay in NeuroNote — no calendar or task buttons are shown.'
+  none: 'Off. Action items stay inside NeuroNote. Pick a service to send them out.'
 }
 
 const EYE_PATHS = {
@@ -32,30 +43,168 @@ const EYE_PATHS = {
   closed: <><path d="M2 2l16 16M5.5 5.5A7.5 7.5 0 002 10s3 6 8 6c1.5 0 2.9-.4 4-1M10 7a3 3 0 013 3"/></>
 }
 
-/** The "--------- GOOGLE ---------" rule between provider sub-sections. */
-function SectionDivider({ label }) {
+const SECTIONS = [
+  { id: 'ai', label: 'AI' },
+  { id: 'transcription', label: 'Transcripts' },
+  { id: 'calendar', label: 'Calendar' },
+  { id: 'about', label: 'About' }
+]
+
+/** Remembered for the tab's lifetime, so a Microsoft sign-in redirect lands
+ *  back on the section it started from. */
+const SECTION_KEY = 'neuronote:settings-section'
+
+const TONE_COLOR = { ok: '#2dff9a', bad: '#ff2d55', warn: '#ff2d55', idle: '#6c727d', checking: '#2aa8ff' }
+const TONE_TEXT = { ok: 'text-ok', bad: 'text-rec', warn: 'text-rec', idle: 'text-muted', checking: 'text-accent' }
+
+/** One status sentence with its coloured light. */
+function StatusRow({ tone = 'idle', children }) {
   return (
-    <div className="flex items-center gap-3 mb-3">
-      <span className="h-px flex-1 bg-red/20" />
-      <span className="font-mono uppercase text-[10px] font-bold tracking-widest text-muted">{label}</span>
-      <span className="h-px flex-1 bg-red/20" />
+    <p className="flex items-start gap-2 text-[13px] leading-snug" role="status">
+      <span
+        className={`w-2 h-2 rounded-full mt-[5px] flex-shrink-0 ${tone === 'checking' ? 'dot-pulse-fast' : ''}`}
+        style={{ background: TONE_COLOR[tone], boxShadow: tone === 'idle' ? 'none' : `0 0 8px ${TONE_COLOR[tone]}` }}
+      />
+      <span className={TONE_TEXT[tone]}>{children}</span>
+    </p>
+  )
+}
+
+/**
+ * v2.7.2 — turns (hasKey, lastKnownStatus) into the line that describes how
+ * the provider's most recent real request went. v2.8 says it in plain words
+ * rather than "LOCAL FALLBACK" / "ERROR // 400".
+ */
+function apiStatusInfo(hasKey, status) {
+  if (!hasKey) return { tone: 'idle', label: 'No key saved' }
+  if (!status) return { tone: 'idle', label: 'Key saved — not used yet' }
+  if (status.ok) return { tone: 'ok', label: 'Working' }
+  if (status.fallback) return { tone: 'warn', label: `Last request failed (${status.reason}), so the on-device summary was used` }
+  return { tone: 'bad', label: `Last request failed: ${status.reason}` }
+}
+
+/** The result of a "test key" check, or nothing if none has run. */
+function KeyCheck({ check }) {
+  if (!check) return null
+  if (check.state === 'checking') return <StatusRow tone="checking">Checking the key…</StatusRow>
+  return <StatusRow tone={!check.ok ? 'bad' : check.warning ? 'warn' : 'ok'}>{check.message}</StatusRow>
+}
+
+function Segmented({ options, value, onChange, label }) {
+  return (
+    <div className="flex gap-1 p-1 rounded-full bg-white/[0.05] border border-white/10" role="tablist" aria-label={label}>
+      {options.map(option => (
+        <button
+          key={option.id}
+          role="tab"
+          aria-selected={value === option.id}
+          onClick={() => onChange(option.id)}
+          className="tap-target -my-2 flex-1 flex items-center"
+        >
+          <span
+            className={`block w-full px-1 py-1.5 rounded-full font-mono text-[13px] font-medium text-center whitespace-nowrap transition-all ${
+              value === option.id ? 'bg-white/[0.12] text-ink chrome-ring' : 'text-muted hover:text-ink'
+            }`}
+          >
+            {option.label}
+          </span>
+        </button>
+      ))}
     </div>
   )
 }
 
-/** Connected / not-connected line with the pulsing dot, one per service. */
+/** A labelled secret field with a show/hide eye. */
+function SecretField({ id, label, hint, value, onChange, placeholder, shown, onToggleShown }) {
+  return (
+    <div className="mb-3">
+      <label className="block text-[13px] font-medium text-ink mb-1.5" htmlFor={id}>
+        {label}{hint && <span className="text-muted font-normal"> {hint}</span>}
+      </label>
+      <div className="relative">
+        <input
+          id={id}
+          type={shown ? 'text' : 'password'}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+          spellCheck={false}
+          className="glass-input w-full px-4 py-3 text-sm pr-11 outline-none"
+        />
+        <button
+          type="button"
+          onClick={onToggleShown}
+          className="tap-target absolute right-0.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-muted hover:text-ink"
+          aria-label={shown ? `Hide ${label}` : `Show ${label}`}
+        >
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+            {shown ? EYE_PATHS.open : EYE_PATHS.closed}
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PrimaryButton({ children, className = '', ...props }) {
+  return (
+    <motion.button
+      className={`btn-primary tap-target inline-flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-semibold disabled:opacity-35 disabled:shadow-none ${className}`}
+      whileTap={{ scale: 0.96 }}
+      {...props}
+    >
+      {children}
+    </motion.button>
+  )
+}
+
+function GhostButton({ children, danger = false, className = '', ...props }) {
+  return (
+    <motion.button
+      className={`tap-target inline-flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-medium disabled:opacity-35 ${
+        danger ? 'text-muted hover:text-rec border border-white/10 hover:border-rec/40 transition-colors' : 'btn-ghost'
+      } ${className}`}
+      whileTap={{ scale: 0.96 }}
+      {...props}
+    >
+      {children}
+    </motion.button>
+  )
+}
+
+/** A switch with its label and one line of explanation. */
+function ToggleRow({ title, description, enabled, onChange, disabled, disabledReason }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted leading-snug mt-0.5">{disabled && disabledReason ? disabledReason : description}</p>
+      </div>
+      <Toggle enabled={!!enabled} onChange={onChange} disabled={disabled} label={title} />
+    </div>
+  )
+}
+
+/** Connected / not-connected line, one per service. */
 function StatusLine({ label, connected }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 dot-pulse' : 'bg-red dot-pulse-fast'}`} />
-      <span className="font-mono text-xs tracking-wider">
-        {label} // {connected ? (
-          <span className="text-green-600 font-bold">CONNECTED ✓</span>
-        ) : (
-          <span className="text-red font-bold">NOT CONNECTED</span>
-        )}
-      </span>
-    </div>
+    <StatusRow tone={connected ? 'ok' : 'idle'}>
+      {label} — {connected ? 'connected' : 'not connected'}
+    </StatusRow>
+  )
+}
+
+/** Setup instructions, folded away until someone needs them. */
+function HowTo({ title, children }) {
+  return (
+    <details className="group mt-3">
+      <summary className="tap-target -my-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent cursor-pointer list-none">
+        <svg className="transition-transform group-open:rotate-90" width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 5l5 5-5 5"/></svg>
+        {title}
+      </summary>
+      <div className="text-xs text-muted leading-relaxed mt-2 space-y-2">{children}</div>
+    </details>
   )
 }
 
@@ -66,6 +215,15 @@ export default function System({ settings, onUpdateSettings }) {
   const [showAssembly, setShowAssembly] = useState(false)
   const [hasOpenai, setHasOpenai] = useState(false)
   const [hasAssembly, setHasAssembly] = useState(false)
+  // v2.7 — AI provider selection (OpenAI vs Gemini) and the Gemini key.
+  const [aiProvider, setAiProvider] = useState(() => getAIProvider())
+  const [geminiKey, setGeminiKey] = useState('')
+  const [showGemini, setShowGemini] = useState(false)
+  const [hasGemini, setHasGemini] = useState(false)
+  // v2.7.2 — last-known outcome of an actual AI call per provider, so API
+  // STATUS can tell OK apart from "key present but every call 400s".
+  const [openaiStatus, setOpenaiStatus] = useState(null)
+  const [geminiStatus, setGeminiStatus] = useState(null)
   const [monthlyUsage, setMonthlyUsage] = useState(0)
   const [dailyUsage, setDailyUsage] = useState([])
   const [googleClientId, setGoogleClientId] = useState('')
@@ -82,6 +240,30 @@ export default function System({ settings, onUpdateSettings }) {
   const [addingCorrection, setAddingCorrection] = useState(false)
   const { provider, setProvider, google, microsoft, showGoogle, showMicrosoft } = useIntegration()
   const toast = useToast()
+  const { ask } = useRecordingContext()
+
+  // v2.8 — SETTINGS is four short sections instead of one long scroll.
+  const [section, setSection] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(SECTION_KEY)
+      return SECTIONS.some(s => s.id === saved) ? saved : 'ai'
+    } catch { return 'ai' }
+  })
+  const changeSection = (next) => {
+    setSection(next)
+    try { sessionStorage.setItem(SECTION_KEY, next) } catch { /* private mode */ }
+  }
+
+  // v2.8 — the outcome of the last "test key" run per service:
+  // { state: 'checking' } while it runs, then the result from key-test.js.
+  const [keyCheck, setKeyCheck] = useState({})
+  const runKeyCheck = async (service, tester, key) => {
+    setKeyCheck(prev => ({ ...prev, [service]: { state: 'checking' } }))
+    const result = await tester(key)
+    setKeyCheck(prev => ({ ...prev, [service]: { state: 'done', ...result } }))
+    return result
+  }
+  const forgetKeyCheck = (service) => setKeyCheck(prev => ({ ...prev, [service]: undefined }))
 
   // v2.5 — keep the field in step when the saved tenant changes (save/clear).
   useEffect(() => { setMsTenantId(microsoft.tenantId || DEFAULT_TENANT_ID) }, [microsoft.tenantId])
@@ -89,19 +271,48 @@ export default function System({ settings, onUpdateSettings }) {
   useEffect(() => {
     setHasOpenai(!!getApiKey('openai'))
     setHasAssembly(!!getApiKey('assemblyai'))
+    setHasGemini(!!getGeminiApiKey())
+    setOpenaiStatus(getAIStatus('openai'))
+    setGeminiStatus(getAIStatus('gemini'))
     setMonthlyUsage(getMonthlyUsage())
     setDailyUsage(getRecentDailyUsage())
     setCorrections(loadCorrections())
   }, [])
+
+  // v2.7 — the key that actually gates AI features right now: whichever
+  // provider is selected, not always OpenAI.
+  const hasCurrentProviderKey = aiProvider === 'gemini' ? hasGemini : hasOpenai
+
+  // v2.7.2 — computed once per render so every STATUS line (per-provider and
+  // the main card) agrees on the same OK/ERROR/LOCAL FALLBACK/NOT CONFIGURED read.
+  const openaiStatusInfo = apiStatusInfo(hasOpenai, openaiStatus)
+  const geminiStatusInfo = apiStatusInfo(hasGemini, geminiStatus)
+  const currentStatusInfo = aiProvider === 'gemini' ? geminiStatusInfo : openaiStatusInfo
+
+  const handleAIProviderChange = (next) => {
+    if (next === aiProvider) return
+    setAiProvider(next)
+    saveAIProvider(next)
+    toast.show({ message: `AI provider set to ${AI_PROVIDER_LABELS[next]}.`, type: 'info' })
+  }
 
   const deleteCorrection = (wrong) => {
     setCorrections(removeCorrection(wrong))
     toast.show({ message: `Forgot the correction for "${wrong}".`, type: 'info' })
   }
 
-  const clearAllCorrections = () => {
+  const clearAllCorrections = async () => {
     if (corrections.length === 0) return
-    if (!window.confirm(`Delete all ${corrections.length} learned corrections?`)) return
+    const choice = await ask({
+      title: 'Remove every correction?',
+      message: `NeuroNote will forget all ${corrections.length} of the words it has learned to fix. This can't be undone.`,
+      options: [
+        { label: 'Keep them', value: 'keep', primary: true },
+        { label: 'Remove all', value: 'remove', tone: 'danger' }
+      ],
+      dismissValue: 'keep'
+    })
+    if (choice !== 'remove') return
     setCorrections(clearCorrections())
     toast.show({ message: 'All learned corrections deleted.', type: 'info' })
   }
@@ -194,496 +405,529 @@ export default function System({ settings, onUpdateSettings }) {
     toast.show({ message: 'Signed out of Microsoft.', type: 'info' })
   }
 
+  // v2.8 — "Save and test": store the key, then make one free read-only call
+  // to confirm the vendor accepts it. With the field empty the same button
+  // re-tests the key that is already saved.
   const saveOpenaiKey = () => {
-    if (openaiKey.trim()) {
-      saveApiKey('openai', openaiKey.trim())
+    const typed = openaiKey.trim()
+    if (typed) {
+      saveApiKey('openai', typed)
       setHasOpenai(true)
       setOpenaiKey('')
+      // v2.7.2 — a new key deserves a clean slate, not yesterday's ERROR.
+      clearAIStatus('openai')
+      setOpenaiStatus(null)
     }
+    const key = typed || getApiKey('openai')
+    if (key) runKeyCheck('openai', testOpenAIKey, key)
   }
 
   const clearOpenaiKey = () => {
     clearApiKey('openai')
     setHasOpenai(false)
+    clearAIStatus('openai')
+    setOpenaiStatus(null)
+    forgetKeyCheck('openai')
   }
 
-  const saveAssemblyKey = () => {
-    if (assemblyKey.trim()) {
-      saveApiKey('assemblyai', assemblyKey.trim())
+  const saveGeminiKey = () => {
+    const typed = geminiKey.trim()
+    if (typed) {
+      saveGeminiApiKey(typed)
+      setHasGemini(true)
+      setGeminiKey('')
+      clearAIStatus('gemini')
+      setGeminiStatus(null)
+    }
+    const key = typed || getGeminiApiKey()
+    if (key) runKeyCheck('gemini', testGeminiKey, key)
+  }
+
+  const clearGeminiKey = () => {
+    clearGeminiApiKey()
+    setHasGemini(false)
+    clearAIStatus('gemini')
+    setGeminiStatus(null)
+    forgetKeyCheck('gemini')
+  }
+
+  const saveAssemblyKey = async () => {
+    const typed = assemblyKey.trim()
+    if (typed) {
+      saveApiKey('assemblyai', typed)
       setHasAssembly(true)
       setAssemblyKey('')
+    }
+    const key = typed || getApiKey('assemblyai')
+    if (!key) return
+    const result = await runKeyCheck('assemblyai', testAssemblyKey, key)
+    // v2.8 — a freshly saved key that works is switched on straight away.
+    // It used to sit unused until a separate toggle was found and flipped.
+    if (typed && result.ok && !settings?.useAssemblyAI) {
+      onUpdateSettings({ ...settings, useAssemblyAI: true })
     }
   }
 
   const clearAssemblyKey = () => {
     clearApiKey('assemblyai')
     setHasAssembly(false)
+    forgetKeyCheck('assemblyai')
     onUpdateSettings({ ...settings, useAssemblyAI: false })
   }
 
   const maxDaily = Math.max(...dailyUsage.map(d => d.total), 0.01)
+  const activeModelName = getProviderDisplayName(aiProvider, settings)
 
   return (
-    <div className="px-4 pb-4 space-y-4">
-      <h1 className="font-mono uppercase text-lg font-bold tracking-wider typewriter-shadow">System</h1>
+    <div className="px-4 pb-4">
+      <h1 className="chrome-text font-mono font-bold text-[28px] leading-tight tracking-tight mb-4">Settings</h1>
 
-      {/* AI ENGINE */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">AI Engine</h3>
-        <div className="relative mb-3">
-          <input
-            type={showOpenai ? 'text' : 'password'}
-            value={openaiKey}
-            onChange={e => setOpenaiKey(e.target.value)}
-            placeholder={hasOpenai ? '••••••••••••••' : 'sk-...'}
-            className="glass-input w-full px-4 py-3 font-mono text-sm pr-10 outline-none"
-          />
-          <button
-            onClick={() => setShowOpenai(!showOpenai)}
-            className="tap-target absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-muted hover:text-ink"
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-              {showOpenai ? (
-                <><circle cx="10" cy="10" r="3"/><path d="M2 10s3-6 8-6 8 6 8 6-3 6-8 6-8-6-8-6z"/></>
-              ) : (
-                <><path d="M2 2l16 16M5.5 5.5A7.5 7.5 0 002 10s3 6 8 6c1.5 0 2.9-.4 4-1M10 7a3 3 0 013 3"/></>
-              )}
-            </svg>
-          </button>
-        </div>
-        <div className="flex gap-2 mb-3">
-          <motion.button
-            onClick={saveOpenaiKey}
-            className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider"
-            style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-            whileTap={{ scale: 0.95 }}
-          >
-            Save Key
-          </motion.button>
-          <motion.button
-            onClick={clearOpenaiKey}
-            className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider"
-            whileTap={{ scale: 0.95 }}
-          >
-            Clear
-          </motion.button>
-        </div>
-        <p className="text-[11px] text-muted leading-relaxed">
-          Without a key, transcription uses your device&apos;s free Web Speech API and summary/cards/quiz use a local extractive engine. With a key, the app upgrades to AssemblyAI + GPT-4o.
-        </p>
-      </GlassCard>
+      <div className="mb-5">
+        <Segmented options={SECTIONS} value={section} onChange={changeSection} label="Settings sections" />
+      </div>
 
-      {/* TRANSCRIPTION */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">Transcription</h3>
-        <div className="relative mb-3">
-          <input
-            type={showAssembly ? 'text' : 'password'}
-            value={assemblyKey}
-            onChange={e => setAssemblyKey(e.target.value)}
-            placeholder={hasAssembly ? '••••••••••••••' : 'Your AssemblyAI key...'}
-            className="glass-input w-full px-4 py-3 font-mono text-sm pr-10 outline-none"
-          />
-          <button
-            onClick={() => setShowAssembly(!showAssembly)}
-            className="tap-target absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-muted hover:text-ink"
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-              {showAssembly ? (
-                <><circle cx="10" cy="10" r="3"/><path d="M2 10s3-6 8-6 8 6 8 6-3 6-8 6-8-6-8-6z"/></>
-              ) : (
-                <><path d="M2 2l16 16M5.5 5.5A7.5 7.5 0 002 10s3 6 8 6c1.5 0 2.9-.4 4-1M10 7a3 3 0 013 3"/></>
-              )}
-            </svg>
-          </button>
-        </div>
-        <div className="flex gap-2 mb-4">
-          <motion.button onClick={saveAssemblyKey}
-            className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider"
-            style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-            whileTap={{ scale: 0.95 }}>
-            Save Key
-          </motion.button>
-          <motion.button onClick={clearAssemblyKey}
-            className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider"
-            whileTap={{ scale: 0.95 }}>
-            Clear
-          </motion.button>
-        </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Use AssemblyAI</p>
-            <p className="text-[11px] text-muted">Speaker diarization, higher accuracy, handles noise</p>
-          </div>
-          <Toggle
-            enabled={settings?.useAssemblyAI}
-            onChange={v => onUpdateSettings({ ...settings, useAssemblyAI: v })}
-            disabled={!hasAssembly}
-          />
-        </div>
-      </GlassCard>
-
-      {/* FLAGSHIP MODE */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">Flagship Mode</h3>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Use Flagship Model (o3) for This Session</p>
-            <p className="text-[11px] text-muted">Best-in-class quality for high-stakes meetings (~$0.27/session vs $0.20)</p>
-          </div>
-          <Toggle
-            enabled={settings?.flagshipMode}
-            onChange={v => onUpdateSettings({ ...settings, flagshipMode: v })}
-            disabled={!hasOpenai}
-          />
-        </div>
-        <p className="text-[10px] text-muted italic mt-2">Session-scoped, resets when you close the app</p>
-      </GlassCard>
-
-      {/* LIVE ACTION ITEMS */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">Live Action Items</h3>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Detect Action Items While Recording</p>
-            <p className="text-[11px] text-muted">Adds ~$0.02/min during recording</p>
-          </div>
-          <Toggle
-            enabled={settings?.liveActionItems}
-            onChange={v => onUpdateSettings({ ...settings, liveActionItems: v })}
-            disabled={!hasOpenai}
-          />
-        </div>
-      </GlassCard>
-
-      {/* CALENDAR & TASKS INTEGRATION (v2.5) */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">Calendar &amp; Tasks Integration</h3>
-
-        <p className="text-sm font-medium mb-2">Which service do you use?</p>
-        <div className="flex gap-1 p-1 rounded-full bg-white/50 border border-red/15 mb-2">
-          {PROVIDERS.map(p => (
-            <button
-              key={p}
-              onClick={() => handleProviderChange(p)}
-              aria-pressed={provider === p}
-              className="tap-target -my-2 flex-1 flex items-center"
-            >
-              <span
-                className={`block w-full px-2 py-1.5 rounded-full font-mono uppercase text-[10px] tracking-wider text-center transition-all ${
-                  provider === p ? 'text-white' : 'text-muted hover:text-ink'
-                }`}
-                style={provider === p ? { background: 'linear-gradient(to right, #dc2626, #991b1b)' } : undefined}
-              >
-                {PROVIDER_LABELS[p]}
-              </span>
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted leading-relaxed mb-4">{PROVIDER_HINTS[provider]}</p>
-
-        {showGoogle && (
-          <div className="mb-2">
-            <SectionDivider label="Google" />
-
-            {/* v2.6 — iOS Safari can evict a PWA's localStorage wholesale. If the
-                Client ID went with it, say so loudly: nothing else here works
-                until it is back. */}
-            {!google.clientId && (
-              <div className="rounded-xl border border-red/40 bg-red/5 px-3 py-2.5 mb-3">
-                <p className="font-mono uppercase text-[10px] font-bold tracking-wider text-red mb-1">
-                  Google Client ID missing
-                </p>
-                <p className="text-[11px] text-muted leading-relaxed">
-                  Paste your OAuth Client ID below to reconnect Calendar and Tasks. Browsers occasionally
-                  clear a web app&apos;s storage — nothing else was lost, and your notes are untouched.
-                </p>
+      <div className="space-y-4">
+        {/* ------------------------------------------------------------ AI */}
+        {section === 'ai' && (
+          <>
+            <GlassCard hoverable={false}>
+              <h2 className="section-label mb-1">AI provider</h2>
+              <p className="text-xs text-muted leading-relaxed mb-3">
+                Writes your summaries, action items and study cards, and answers questions about your meetings.
+              </p>
+              <div className="mb-4">
+                <Segmented
+                  options={AI_PROVIDERS.map(p => ({ id: p, label: AI_PROVIDER_LABELS[p] }))}
+                  value={aiProvider}
+                  onChange={handleAIProviderChange}
+                  label="AI provider"
+                />
               </div>
-            )}
 
-            <label className="font-mono uppercase text-[10px] tracking-wider text-muted block mb-1" htmlFor="google-client-id">
-              OAuth Client ID
-            </label>
-            <div className="relative mb-3">
-              <input
-                id="google-client-id"
-                type={showClientId ? 'text' : 'password'}
-                value={googleClientId}
-                onChange={e => setGoogleClientId(e.target.value)}
-                placeholder={google.clientId ? '••••••••••••••' : '123456789-abc.apps.googleusercontent.com'}
-                className="glass-input w-full px-4 py-3 font-mono text-sm pr-10 outline-none"
-              />
-              <button
-                onClick={() => setShowClientId(!showClientId)}
-                className="tap-target absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-muted hover:text-ink"
-                aria-label={showClientId ? 'Hide Client ID' : 'Show Client ID'}
-              >
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  {showClientId ? EYE_PATHS.open : EYE_PATHS.closed}
-                </svg>
-              </button>
-            </div>
-
-            <label className="font-mono uppercase text-[10px] tracking-wider text-muted block mb-1" htmlFor="google-client-secret">
-              Client Secret <span className="normal-case tracking-normal">(only if Google asks for one)</span>
-            </label>
-            <div className="relative mb-3">
-              <input
-                id="google-client-secret"
-                type={showClientSecret ? 'text' : 'password'}
-                value={googleClientSecret}
-                onChange={e => setGoogleClientSecret(e.target.value)}
-                placeholder={google.hasClientSecret ? '••••••••••••••' : 'Leave empty unless sign-in reports it is required'}
-                className="glass-input w-full px-4 py-3 font-mono text-sm pr-10 outline-none"
-              />
-              <button
-                onClick={() => setShowClientSecret(!showClientSecret)}
-                className="tap-target absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-muted hover:text-ink"
-                aria-label={showClientSecret ? 'Hide client secret' : 'Show client secret'}
-              >
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  {showClientSecret ? EYE_PATHS.open : EYE_PATHS.closed}
-                </svg>
-              </button>
-            </div>
-
-            <div className="flex gap-2 mb-4">
-              <motion.button
-                onClick={saveGoogleCredentials}
-                className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider"
-                style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-                whileTap={{ scale: 0.95 }}
-              >
-                Save
-              </motion.button>
-              <motion.button
-                onClick={clearGoogleCredentials}
-                className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider"
-                whileTap={{ scale: 0.95 }}
-              >
-                Clear
-              </motion.button>
-            </div>
-
-            {google.signedIn ? (
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{google.email || 'Google account connected'}</p>
-                  <p className="text-[11px] text-muted">Calendar events and tasks will be created here</p>
-                  {google.autoRefresh ? (
-                    <p className="font-mono uppercase text-[10px] tracking-wider text-green-600 mt-0.5 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 dot-pulse" />
-                      Auto-refreshes silently
-                    </p>
-                  ) : (
-                    <p className="font-mono uppercase text-[10px] tracking-wider text-red mt-0.5">
-                      Session expires in an hour — sign in again to enable auto-refresh
-                    </p>
-                  )}
-                </div>
-                <motion.button
-                  onClick={handleGoogleSignOut}
-                  className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider whitespace-nowrap"
-                  whileTap={{ scale: 0.95 }}
-                >
-                  Sign Out
-                </motion.button>
-              </div>
-            ) : (
-              <motion.button
-                onClick={handleGoogleSignIn}
-                disabled={!google.clientId || google.signingIn}
-                className="tap-target inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider mb-3 disabled:opacity-40"
-                style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-                whileTap={{ scale: 0.95 }}
-              >
-                {google.signingIn ? 'Connecting...' : 'Sign In with Google'}
-              </motion.button>
-            )}
-
-            <div className="space-y-2 mb-3">
-              <StatusLine label="GOOGLE CALENDAR" connected={google.signedIn} />
-              <StatusLine label="GOOGLE TASKS" connected={google.signedIn} />
-            </div>
-
-            <p className="text-[11px] text-muted leading-relaxed">
-              Get your Client ID from Google Cloud Console &rarr; APIs &amp; Services &rarr; Credentials. Create an
-              OAuth 2.0 Client ID of type &quot;Web application&quot; and add this app&apos;s origin to the
-              authorized JavaScript origins. The consent screen needs the calendar.events, tasks,
-              userinfo.email and openid scopes.
-            </p>
-            <p className="text-[11px] text-muted leading-relaxed mt-2">
-              v2.6 signs in with the authorization code flow and PKCE, so the session renews itself instead of
-              expiring every hour. Leave the client secret blank unless sign-in explicitly reports that Google
-              requires one for this OAuth client. If a sign-in ever completes without enabling auto-refresh,
-              revoke NeuroNote at{' '}
-              <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer"
-                className="text-red hover:underline">myaccount.google.com/permissions</a>{' '}
-              and sign in once more — Google only issues a refresh token on a fresh consent.
-            </p>
-          </div>
-        )}
-
-        {showMicrosoft && (
-          <div className={showGoogle ? 'mt-6' : ''}>
-            <SectionDivider label="Microsoft" />
-
-            <label className="font-mono uppercase text-[10px] tracking-wider text-muted block mb-1" htmlFor="ms-client-id">
-              Azure Client ID
-            </label>
-            <div className="relative mb-3">
-              <input
-                id="ms-client-id"
-                type={showMsClientId ? 'text' : 'password'}
-                value={msClientId}
-                onChange={e => setMsClientId(e.target.value)}
-                placeholder={microsoft.clientId ? '••••••••••••••' : '00000000-0000-0000-0000-000000000000'}
-                className="glass-input w-full px-4 py-3 font-mono text-sm pr-10 outline-none"
-              />
-              <button
-                onClick={() => setShowMsClientId(!showMsClientId)}
-                className="tap-target absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-muted hover:text-ink"
-                aria-label={showMsClientId ? 'Hide Azure Client ID' : 'Show Azure Client ID'}
-              >
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  {showMsClientId ? EYE_PATHS.open : EYE_PATHS.closed}
-                </svg>
-              </button>
-            </div>
-
-            <label className="font-mono uppercase text-[10px] tracking-wider text-muted block mb-1" htmlFor="ms-tenant-id">
-              Tenant ID
-            </label>
-            <input
-              id="ms-tenant-id"
-              type="text"
-              value={msTenantId}
-              onChange={e => setMsTenantId(e.target.value)}
-              placeholder={DEFAULT_TENANT_ID}
-              className="glass-input w-full px-4 py-3 font-mono text-sm outline-none mb-3"
-            />
-
-            <div className="flex gap-2 mb-4">
-              <motion.button
-                onClick={saveMicrosoftIds}
-                className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider"
-                style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-                whileTap={{ scale: 0.95 }}
-              >
-                Save
-              </motion.button>
-              <motion.button
-                onClick={clearMicrosoftIds}
-                className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider"
-                whileTap={{ scale: 0.95 }}
-              >
-                Clear
-              </motion.button>
-            </div>
-
-            {microsoft.signedIn ? (
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{microsoft.email || 'Microsoft account connected'}</p>
-                  <p className="text-[11px] text-muted">Outlook events and To Do tasks will be created here</p>
-                </div>
-                <motion.button
-                  onClick={handleMicrosoftSignOut}
-                  className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider whitespace-nowrap"
-                  whileTap={{ scale: 0.95 }}
-                >
-                  Sign Out
-                </motion.button>
-              </div>
-            ) : (
-              <motion.button
-                onClick={handleMicrosoftSignIn}
-                disabled={!microsoft.clientId || microsoft.signingIn}
-                className="tap-target inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider mb-3 disabled:opacity-40"
-                style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-                whileTap={{ scale: 0.95 }}
-              >
-                {microsoft.signingIn ? 'Connecting...' : 'Sign In with Microsoft'}
-              </motion.button>
-            )}
-
-            <div className="space-y-2 mb-3">
-              <StatusLine label="OUTLOOK CALENDAR" connected={microsoft.signedIn} />
-              <StatusLine label="MICROSOFT TO DO" connected={microsoft.signedIn} />
-            </div>
-
-            <p className="text-[11px] text-muted leading-relaxed">
-              Register a Single-page application in the Azure portal &rarr; Microsoft Entra ID &rarr; App registrations,
-              add this app&apos;s origin as the redirect URI, and paste the Application (client) ID above. Leave the
-              Tenant ID as &quot;{DEFAULT_TENANT_ID}&quot; unless your organization requires a specific directory.
-              No client secret is ever needed.
-            </p>
-          </div>
-        )}
-
-        {provider === 'none' && (
-          <p className="text-[11px] text-muted leading-relaxed">
-            Pick Google, Microsoft, or Both above to send action items straight to a calendar or task list.
-          </p>
-        )}
-      </GlassCard>
-
-      {/* LEARNED CORRECTIONS (v2.2) */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-1">
-          Learned Corrections // <span className="text-red">{corrections.length}</span>
-        </h3>
-        <p className="text-[11px] text-muted leading-relaxed mb-3">
-          Words NeuroNote will always correct. Long-press any word in a transcript to add more.
-        </p>
-
-        {corrections.length === 0 ? (
-          <p className="text-sm text-muted italic mb-3">No corrections learned yet.</p>
-        ) : (
-          <ul className="max-h-56 overflow-y-auto space-y-2 mb-3 pr-1">
-            {corrections.map((c) => (
-              <li key={c.wrong} className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm break-words">
-                    <span className="line-through text-muted">{c.wrong}</span>
-                    <span className="text-muted mx-1.5">&rarr;</span>
-                    <span className="font-bold text-red">{c.right}</span>
-                  </p>
-                  <p className="text-[10px] text-muted font-mono">
-                    Used: {c.useCount} time{c.useCount === 1 ? '' : 's'}
+              {aiProvider === 'openai' && (
+                <div>
+                  <SecretField
+                    id="openai-key"
+                    label="OpenAI API key"
+                    value={openaiKey}
+                    onChange={setOpenaiKey}
+                    placeholder={hasOpenai ? 'Saved — paste a new key to replace it' : 'sk-…'}
+                    shown={showOpenai}
+                    onToggleShown={() => setShowOpenai(!showOpenai)}
+                  />
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <PrimaryButton onClick={saveOpenaiKey} disabled={!openaiKey.trim() && !hasOpenai}>
+                      {openaiKey.trim() || !hasOpenai ? 'Save and test' : 'Test key'}
+                    </PrimaryButton>
+                    {hasOpenai && <GhostButton danger onClick={clearOpenaiKey}>Remove key</GhostButton>}
+                  </div>
+                  <div className="space-y-1.5">
+                    <KeyCheck check={keyCheck.openai} />
+                    {!keyCheck.openai && <StatusRow tone={openaiStatusInfo.tone}>{openaiStatusInfo.label}</StatusRow>}
+                  </div>
+                  <p className="text-xs text-muted leading-relaxed mt-3">
+                    Uses {MODEL_DISPLAY[MODEL_TERRA]} for summaries and {MODEL_DISPLAY[MODEL_LUNA]} for quick jobs. Pay-as-you-go, billed by OpenAI to your own account.
                   </p>
                 </div>
-                <button
-                  onClick={() => deleteCorrection(c.wrong)}
-                  className="tap-target -m-3 text-muted hover:text-red text-sm leading-none flex-shrink-0 flex items-center justify-center"
-                  aria-label={`Delete correction ${c.wrong}`}
-                >
-                  &times;
-                </button>
-              </li>
-            ))}
-          </ul>
+              )}
+
+              {aiProvider === 'gemini' && (
+                <div>
+                  <SecretField
+                    id="gemini-key"
+                    label="Gemini API key"
+                    value={geminiKey}
+                    onChange={setGeminiKey}
+                    placeholder={hasGemini ? 'Saved — paste a new key to replace it' : 'AIza…'}
+                    shown={showGemini}
+                    onToggleShown={() => setShowGemini(!showGemini)}
+                  />
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <PrimaryButton onClick={saveGeminiKey} disabled={!geminiKey.trim() && !hasGemini}>
+                      {geminiKey.trim() || !hasGemini ? 'Save and test' : 'Test key'}
+                    </PrimaryButton>
+                    {hasGemini && <GhostButton danger onClick={clearGeminiKey}>Remove key</GhostButton>}
+                  </div>
+                  <div className="space-y-1.5">
+                    <KeyCheck check={keyCheck.gemini} />
+                    {!keyCheck.gemini && <StatusRow tone={geminiStatusInfo.tone}>{geminiStatusInfo.label}</StatusRow>}
+                  </div>
+                  <p className="text-xs text-muted leading-relaxed mt-3">
+                    Uses {MODEL_DISPLAY[GEMINI_MODEL_FLASH]}, which Google offers on its free tier. No credit card needed.
+                  </p>
+                  <HowTo title="How to get a free Gemini key">
+                    <ol className="list-decimal pl-4 space-y-0.5">
+                      <li>
+                        Open{' '}
+                        <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">aistudio.google.com</a>{' '}
+                        and sign in with your Google account.
+                      </li>
+                      <li>Choose “Get API key”.</li>
+                      <li>Create a key and paste it above.</li>
+                    </ol>
+                  </HowTo>
+                </div>
+              )}
+            </GlassCard>
+
+            <GlassCard hoverable={false}>
+              <h2 className="section-label mb-3">Extras</h2>
+              <div className="space-y-4">
+                <ToggleRow
+                  title="Catch action items while recording"
+                  description="Spots commitments as they are said. Adds a small AI cost per minute of recording."
+                  enabled={settings?.liveActionItems}
+                  onChange={v => onUpdateSettings({ ...settings, liveActionItems: v })}
+                  disabled={!hasCurrentProviderKey}
+                  disabledReason="Add an AI key above to turn this on."
+                />
+                <div className="border-t border-white/10" />
+                <ToggleRow
+                  title={`Best-quality summaries (${MODEL_DISPLAY[MODEL_SOL]})`}
+                  description="For high-stakes meetings. About twice the AI cost per summary. Turns itself off when you close the app."
+                  enabled={settings?.flagshipMode}
+                  onChange={v => onUpdateSettings({ ...settings, flagshipMode: v })}
+                  disabled={!hasOpenai || aiProvider !== 'openai'}
+                  disabledReason={aiProvider !== 'openai' ? 'Available with OpenAI as the provider.' : 'Add an OpenAI key above to turn this on.'}
+                />
+              </div>
+            </GlassCard>
+
+            {!hasCurrentProviderKey && (
+              <p className="text-xs text-muted leading-relaxed px-1">
+                No key yet? NeuroNote still records and transcribes with your browser&apos;s built-in speech recognition, and
+                builds a basic summary on this device. A key swaps both for much better results.
+              </p>
+            )}
+          </>
         )}
 
-        <div className="flex gap-2">
-          <motion.button
-            onClick={() => setAddingCorrection(true)}
-            className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider"
-            style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-            whileTap={{ scale: 0.95 }}
-          >
-            + Add Manually
-          </motion.button>
-          <motion.button
-            onClick={clearAllCorrections}
-            disabled={corrections.length === 0}
-            className="tap-target inline-flex items-center justify-center px-4 py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider disabled:opacity-40"
-            whileTap={{ scale: 0.95 }}
-          >
-            Clear All
-          </motion.button>
-        </div>
-      </GlassCard>
+        {/* -------------------------------------------------- TRANSCRIPTION */}
+        {section === 'transcription' && (
+          <>
+            <GlassCard hoverable={false}>
+              <h2 className="section-label mb-1">Transcription</h2>
+              <p className="text-xs text-muted leading-relaxed mb-3">
+                AssemblyAI turns your recordings into accurate text, copes with background noise, and can label who said what.
+              </p>
+              <SecretField
+                id="assembly-key"
+                label="AssemblyAI API key"
+                value={assemblyKey}
+                onChange={setAssemblyKey}
+                placeholder={hasAssembly ? 'Saved — paste a new key to replace it' : 'Paste your AssemblyAI key'}
+                shown={showAssembly}
+                onToggleShown={() => setShowAssembly(!showAssembly)}
+              />
+              <div className="flex flex-wrap gap-2 mb-3">
+                <PrimaryButton onClick={saveAssemblyKey} disabled={!assemblyKey.trim() && !hasAssembly}>
+                  {assemblyKey.trim() || !hasAssembly ? 'Save and test' : 'Test key'}
+                </PrimaryButton>
+                {hasAssembly && <GhostButton danger onClick={clearAssemblyKey}>Remove key</GhostButton>}
+              </div>
+              <div className="mb-4">
+                <KeyCheck check={keyCheck.assemblyai} />
+                {!keyCheck.assemblyai && (
+                  <StatusRow tone={hasAssembly && settings?.useAssemblyAI ? 'ok' : 'idle'}>
+                    {!hasAssembly ? 'No key saved' : settings?.useAssemblyAI ? 'In use for every recording' : 'Key saved, but switched off below'}
+                  </StatusRow>
+                )}
+              </div>
+              <div className="border-t border-white/10 pt-4">
+                <ToggleRow
+                  title="Use AssemblyAI for transcripts"
+                  description="Off falls back to your browser's built-in speech recognition."
+                  enabled={settings?.useAssemblyAI}
+                  onChange={v => onUpdateSettings({ ...settings, useAssemblyAI: v })}
+                  disabled={!hasAssembly}
+                  disabledReason="Add a key above to turn this on."
+                />
+              </div>
+              <HowTo title="How to get an AssemblyAI key">
+                <p>
+                  Create an account at{' '}
+                  <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">assemblyai.com</a>,
+                  open the dashboard, and copy the API key shown there. New accounts start with free credit.
+                </p>
+              </HowTo>
+            </GlassCard>
+
+            {/* LEARNED CORRECTIONS (v2.2) */}
+            <GlassCard hoverable={false}>
+              <div className="flex items-baseline justify-between gap-3 mb-1">
+                <h2 className="section-label">Words to always fix</h2>
+                <span className="pill">{corrections.length}</span>
+              </div>
+              <p className="text-xs text-muted leading-relaxed mb-3">
+                Names and terms NeuroNote keeps getting wrong. Press and hold any word in a transcript to teach it one.
+              </p>
+
+              {corrections.length === 0 ? (
+                <p className="text-sm text-muted mb-3">Nothing here yet.</p>
+              ) : (
+                <ul className="max-h-56 overflow-y-auto space-y-2.5 mb-3 pr-1">
+                  {corrections.map((c) => (
+                    <li key={c.wrong} className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm break-words">
+                          <span className="line-through text-muted">{c.wrong}</span>
+                          <span className="text-muted mx-1.5">&rarr;</span>
+                          <span className="font-semibold text-ok">{c.right}</span>
+                        </p>
+                        <p className="text-xs text-muted">
+                          Used {c.useCount} time{c.useCount === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => deleteCorrection(c.wrong)}
+                        className="tap-target -m-3 text-muted hover:text-rec flex-shrink-0 flex items-center justify-center transition-colors"
+                        aria-label={`Delete correction ${c.wrong}`}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M5 5l10 10M15 5 5 15"/></svg>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <PrimaryButton onClick={() => setAddingCorrection(true)}>Add a word</PrimaryButton>
+                {corrections.length > 0 && <GhostButton danger onClick={clearAllCorrections}>Remove all</GhostButton>}
+              </div>
+            </GlassCard>
+          </>
+        )}
+
+        {/* ------------------------------------------------------ CALENDAR */}
+        {section === 'calendar' && (
+          <GlassCard hoverable={false}>
+            <h2 className="section-label mb-1">Calendar and tasks</h2>
+            <p className="text-xs text-muted leading-relaxed mb-3">
+              Send action items straight from a meeting to your calendar or task list.
+            </p>
+            <div className="mb-2">
+              <Segmented
+                options={PROVIDERS.map(p => ({ id: p, label: PROVIDER_LABELS[p] }))}
+                value={provider}
+                onChange={handleProviderChange}
+                label="Calendar and tasks service"
+              />
+            </div>
+            <p className="text-xs text-muted leading-relaxed mb-4">{PROVIDER_HINTS[provider]}</p>
+
+            {showGoogle && (
+              <div className="border-t border-white/10 pt-4">
+                <h3 className="font-mono font-semibold text-[15px] mb-3">Google</h3>
+
+                {/* v2.6 — iOS Safari can evict a PWA's localStorage wholesale. If the
+                    Client ID went with it, say so loudly: nothing else here works
+                    until it is back. */}
+                {!google.clientId && (
+                  <div className="rounded-xl border border-accent/40 bg-accent/[0.07] px-3 py-2.5 mb-3">
+                    <p className="text-[13px] font-semibold text-accent mb-0.5">Google Client ID needed</p>
+                    <p className="text-xs text-muted leading-relaxed">
+                      Paste your OAuth Client ID below to connect Calendar and Tasks. If it was here before, your
+                      browser cleared it — your notes are untouched.
+                    </p>
+                  </div>
+                )}
+
+                <SecretField
+                  id="google-client-id"
+                  label="OAuth Client ID"
+                  value={googleClientId}
+                  onChange={setGoogleClientId}
+                  placeholder={google.clientId ? 'Saved — paste a new one to replace it' : '123456789-abc.apps.googleusercontent.com'}
+                  shown={showClientId}
+                  onToggleShown={() => setShowClientId(!showClientId)}
+                />
+                <SecretField
+                  id="google-client-secret"
+                  label="Client secret"
+                  hint="(only if Google asks for one)"
+                  value={googleClientSecret}
+                  onChange={setGoogleClientSecret}
+                  placeholder={google.hasClientSecret ? 'Saved' : 'Usually left empty'}
+                  shown={showClientSecret}
+                  onToggleShown={() => setShowClientSecret(!showClientSecret)}
+                />
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <GhostButton onClick={saveGoogleCredentials} disabled={!googleClientId.trim() && !googleClientSecret.trim()}>Save</GhostButton>
+                  {google.clientId && <GhostButton danger onClick={clearGoogleCredentials}>Remove</GhostButton>}
+                </div>
+
+                {google.signedIn ? (
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{google.email || 'Google account connected'}</p>
+                      {google.autoRefresh ? (
+                        <p className="text-xs text-ok mt-0.5">Stays signed in automatically</p>
+                      ) : (
+                        <p className="text-xs text-rec mt-0.5">
+                          Expires in an hour — sign in again to stay connected
+                        </p>
+                      )}
+                    </div>
+                    <GhostButton onClick={handleGoogleSignOut} className="whitespace-nowrap">Sign out</GhostButton>
+                  </div>
+                ) : (
+                  <PrimaryButton onClick={handleGoogleSignIn} disabled={!google.clientId || google.signingIn} className="mb-3">
+                    {google.signingIn ? 'Connecting…' : 'Sign in with Google'}
+                  </PrimaryButton>
+                )}
+
+                <div className="space-y-1.5">
+                  <StatusLine label="Google Calendar" connected={google.signedIn} />
+                  <StatusLine label="Google Tasks" connected={google.signedIn} />
+                </div>
+
+                <HowTo title="How to get a Google Client ID">
+                  <p>
+                    In Google Cloud Console, go to APIs &amp; Services &rarr; Credentials. Create an OAuth 2.0 Client ID of
+                    type &quot;Web application&quot; and add this app&apos;s address to the authorized JavaScript origins. The
+                    consent screen needs the calendar.events, tasks, userinfo.email and openid scopes.
+                  </p>
+                  <p>
+                    Leave the client secret blank unless sign-in reports that Google requires one. If a sign-in completes
+                    without staying connected, remove NeuroNote at{' '}
+                    <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer"
+                      className="text-accent hover:underline">myaccount.google.com/permissions</a>{' '}
+                    and sign in once more — Google only grants long-lived access on a fresh consent.
+                  </p>
+                </HowTo>
+              </div>
+            )}
+
+            {showMicrosoft && (
+              <div className={`border-t border-white/10 pt-4 ${showGoogle ? 'mt-5' : ''}`}>
+                <h3 className="font-mono font-semibold text-[15px] mb-3">Microsoft 365</h3>
+
+                <SecretField
+                  id="ms-client-id"
+                  label="Azure Client ID"
+                  value={msClientId}
+                  onChange={setMsClientId}
+                  placeholder={microsoft.clientId ? 'Saved — paste a new one to replace it' : '00000000-0000-0000-0000-000000000000'}
+                  shown={showMsClientId}
+                  onToggleShown={() => setShowMsClientId(!showMsClientId)}
+                />
+
+                <label className="block text-[13px] font-medium text-ink mb-1.5" htmlFor="ms-tenant-id">
+                  Tenant ID
+                </label>
+                <input
+                  id="ms-tenant-id"
+                  type="text"
+                  value={msTenantId}
+                  onChange={e => setMsTenantId(e.target.value)}
+                  placeholder={DEFAULT_TENANT_ID}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="glass-input w-full px-4 py-3 text-sm outline-none mb-3"
+                />
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <GhostButton onClick={saveMicrosoftIds} disabled={!msClientId.trim() && !microsoft.clientId}>Save</GhostButton>
+                  {microsoft.clientId && <GhostButton danger onClick={clearMicrosoftIds}>Remove</GhostButton>}
+                </div>
+
+                {microsoft.signedIn ? (
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{microsoft.email || 'Microsoft account connected'}</p>
+                      <p className="text-xs text-muted mt-0.5">Outlook events and To Do tasks go here</p>
+                    </div>
+                    <GhostButton onClick={handleMicrosoftSignOut} className="whitespace-nowrap">Sign out</GhostButton>
+                  </div>
+                ) : (
+                  <PrimaryButton onClick={handleMicrosoftSignIn} disabled={!microsoft.clientId || microsoft.signingIn} className="mb-3">
+                    {microsoft.signingIn ? 'Connecting…' : 'Sign in with Microsoft'}
+                  </PrimaryButton>
+                )}
+
+                <div className="space-y-1.5">
+                  <StatusLine label="Outlook Calendar" connected={microsoft.signedIn} />
+                  <StatusLine label="Microsoft To Do" connected={microsoft.signedIn} />
+                </div>
+
+                <HowTo title="How to get an Azure Client ID">
+                  <p>
+                    In the Azure portal, go to Microsoft Entra ID &rarr; App registrations and register a Single-page
+                    application. Add this app&apos;s address as the redirect URI, then paste the Application (client) ID above.
+                    Leave the Tenant ID as &quot;{DEFAULT_TENANT_ID}&quot; unless your organization requires a specific
+                    directory. No client secret is needed.
+                  </p>
+                </HowTo>
+              </div>
+            )}
+          </GlassCard>
+        )}
+
+        {/* --------------------------------------------------------- ABOUT */}
+        {section === 'about' && (
+          <>
+            <GlassCard hoverable={false}>
+              <h2 className="section-label mb-3">Right now</h2>
+              <dl className="space-y-2.5 text-sm">
+                {[
+                  ['AI provider', AI_PROVIDER_LABELS[aiProvider]],
+                  ['Model', activeModelName],
+                  ['Transcription', hasAssembly && settings?.useAssemblyAI ? 'AssemblyAI' : 'Browser speech recognition'],
+                  ['Calendar and tasks', PROVIDER_LABELS[provider]],
+                  ['Version', APP_VERSION]
+                ].map(([term, value]) => (
+                  <div key={term} className="flex items-baseline justify-between gap-4">
+                    <dt className="text-muted">{term}</dt>
+                    <dd className="font-medium text-right">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="border-t border-white/10 mt-3 pt-3">
+                <StatusRow tone={currentStatusInfo.tone}>AI: {currentStatusInfo.label}</StatusRow>
+              </div>
+            </GlassCard>
+
+            {/* USAGE */}
+            <GlassCard hoverable={false}>
+              <h2 className="section-label mb-2">Estimated spend this month</h2>
+              <p className="chrome-text font-mono text-4xl font-bold tracking-tight">${monthlyUsage.toFixed(2)}</p>
+
+              <div className="flex items-end gap-1.5 h-14 mt-4 mb-1">
+                {dailyUsage.map((d, i) => (
+                  <div key={i} className="flex-1 flex flex-col items-center justify-end gap-1 h-full">
+                    <div
+                      className="w-full rounded-t"
+                      style={{
+                        height: `${Math.max(2, (d.total / maxDaily) * 36)}px`,
+                        background: d.total > 0 ? 'var(--grad-accent)' : 'rgba(255,255,255,0.12)'
+                      }}
+                    />
+                    <span className="text-[11px] text-muted">{d.date}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted leading-relaxed mt-3">
+                An estimate from the requests this browser has made. Your OpenAI and AssemblyAI dashboards have the real bill.
+              </p>
+              <button
+                onClick={() => { clearUsage(); setMonthlyUsage(0); setDailyUsage(getRecentDailyUsage()) }}
+                className="tap-target -mb-2 inline-flex items-center text-xs font-medium text-muted hover:text-ink transition-colors"
+              >
+                Reset this estimate
+              </button>
+            </GlassCard>
+
+            <GlassCard hoverable={false}>
+              <h2 className="section-label mb-2">Your data</h2>
+              <p className="text-sm text-muted leading-relaxed">
+                Keys, recordings and notes are stored in this browser on this device. Audio and text are sent only to the
+                AI and transcription services whose keys you add here.
+              </p>
+            </GlassCard>
+          </>
+        )}
+      </div>
 
       {addingCorrection && (
         <CorrectionPopup
@@ -692,65 +936,6 @@ export default function System({ settings, onUpdateSettings }) {
           onCancel={() => setAddingCorrection(false)}
         />
       )}
-
-      {/* STATUS */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">Status</h3>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${hasOpenai ? 'bg-green-500 dot-pulse' : 'bg-red dot-pulse-fast'}`} />
-            <span className="font-mono text-xs tracking-wider">
-              API STATUS // {hasOpenai ? (
-                <span className="text-green-600 font-bold">OK</span>
-              ) : (
-                <span className="text-red font-bold">LOCAL FALLBACK</span>
-              )}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red" />
-            <span className="font-mono text-xs tracking-wider">
-              MODEL // <span className="text-red font-bold">{getDisplayName(settings)}</span>
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red" />
-            <span className="font-mono text-xs tracking-wider">
-              VERSION // <span className="text-red font-bold">v{APP_VERSION}</span>
-            </span>
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* USAGE */}
-      <GlassCard hoverable={false}>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider text-muted mb-3">Usage</h3>
-        <p className="text-[11px] text-muted mb-1">Estimated spend this month</p>
-        <p className="font-mono text-2xl font-bold">${monthlyUsage.toFixed(2)}</p>
-
-        <div className="flex items-end gap-1 h-12 mt-4 mb-2">
-          {dailyUsage.map((d, i) => (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <div
-                className="w-full rounded-t"
-                style={{
-                  height: `${Math.max(2, (d.total / maxDaily) * 40)}px`,
-                  background: 'linear-gradient(to top, #dc2626, #991b1b)',
-                  opacity: d.total > 0 ? 1 : 0.2
-                }}
-              />
-              <span className="text-[8px] text-muted font-mono">{d.date}</span>
-            </div>
-          ))}
-        </div>
-
-        <button
-          onClick={() => { clearUsage(); setMonthlyUsage(0); setDailyUsage(getRecentDailyUsage()) }}
-          className="text-[10px] text-muted hover:text-red font-mono uppercase tracking-wider mt-2"
-        >
-          Reset
-        </button>
-      </GlassCard>
     </div>
   )
 }

@@ -4,7 +4,7 @@ import { draftFromActionItem } from '../lib/actionItems'
 import { sendActionItem, SERVICE_LABELS, FALLBACK_LINKS } from '../services/action-sync'
 import { useToast } from './ui/Toast'
 
-const LABEL = 'font-mono uppercase text-[10px] tracking-wider text-muted block mb-1'
+const LABEL = 'font-mono text-xs font-medium text-muted block mb-1'
 const FIELD = 'glass-input w-full px-3 py-2 text-sm outline-none'
 
 /**
@@ -101,7 +101,7 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/75"
       style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -110,14 +110,14 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
     >
       <motion.div
         className="glass w-full max-w-md p-5"
-        style={{ background: 'rgba(255,255,255,0.92)' }}
+        style={{ background: '#0b0c0f' }}
         initial={{ opacity: 0, y: 24, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 16, scale: 0.98 }}
         transition={{ type: 'spring', damping: 26, stiffness: 260 }}
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider typewriter-shadow mb-4">
+        <h3 className="section-label typewriter-shadow mb-4">
           {isEvent ? '📅 Add to Calendar' : '✓ Add to Tasks'}
         </h3>
 
@@ -125,7 +125,7 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
           {providers.length > 1 && (
             <div>
               <label className={LABEL}>Send to</label>
-              <div className="flex gap-1 p-0.5 rounded-full bg-white/60 border border-red/15">
+              <div className="flex gap-1 p-0.5 rounded-full bg-white/[0.06] border border-accent/15">
                 {providers.map(p => (
                   <button
                     key={p}
@@ -134,10 +134,10 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
                     className="tap-target -my-2.5 flex-1 flex items-center"
                   >
                     <span
-                      className={`block w-full px-2 py-1.5 rounded-full font-mono uppercase text-[9px] tracking-wider transition-all ${
+                      className={`block w-full px-2 py-1.5 rounded-full font-mono text-xs font-medium transition-all ${
                         provider === p ? 'text-white' : 'text-muted hover:text-ink'
                       }`}
-                      style={provider === p ? { background: 'linear-gradient(to right, #dc2626, #991b1b)' } : undefined}
+                      style={provider === p ? { background: 'var(--grad-accent)' } : undefined}
                     >
                       {SERVICE_LABELS[p][isEvent ? 'event' : 'task']}
                     </span>
@@ -185,7 +185,7 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
           )}
 
           {!isEvent && (
-            <p className="text-[10px] text-muted leading-relaxed">
+            <p className="text-[11px] text-muted leading-relaxed">
               {destination} stores dates only — the time is saved in the task notes as &quot;Due time&quot;.
             </p>
           )}
@@ -195,8 +195,8 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
           <motion.button
             onClick={handleSubmit}
             disabled={submitting}
-            className="tap-target flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider disabled:opacity-60"
-            style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
+            className="tap-target flex-1 inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-white font-mono text-xs font-medium disabled:opacity-60"
+            style={{ background: 'var(--grad-accent)' }}
             whileTap={{ scale: 0.97 }}
           >
             {submitting ? 'Adding...' : `Add to ${destination}`}
@@ -204,7 +204,7 @@ export default function AddToServiceDialog({ item, type, noteTitle, providers = 
           <motion.button
             onClick={onClose}
             disabled={submitting}
-            className="tap-target inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider disabled:opacity-60"
+            className="tap-target inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-accent/30 text-accent font-mono text-xs font-medium disabled:opacity-60"
             whileTap={{ scale: 0.97 }}
           >
             Cancel

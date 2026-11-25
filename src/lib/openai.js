@@ -1,16 +1,29 @@
 import { getApiKey, addUsage } from './storage.js'
-import { MODEL_TERRA, MODEL_LUNA, EMBEDDING_MODEL, MODEL_COSTS } from './models.js'
+import { EMBEDDING_MODEL, MODEL_COSTS } from './models.js'
+import { WRITING_STYLE_RULES, ACTION_ITEM_STYLE_RULES, STUDY_MATERIAL_STYLE_RULES } from './prompt-style.js'
+
+// v2.8 — GPT-6 family (was GPT-5.6 in v2.7.1). This is the single place to change a tier's model id.
+export const OPENAI_MODELS = {
+  terra: 'gpt-6.1-terra',
+  luna: 'gpt-6-luna',
+  sol: 'gpt-6.2-sol'
+}
 
 const OPENAI_BASE = 'https://api.openai.com/v1'
 
 function getKey() {
   const key = getApiKey('openai')
-  if (!key) throw new Error('OpenAI API key not configured. Add it in System settings.')
+  if (!key) throw new Error('OpenAI API key not configured. Add it in Settings.')
   return key
 }
 
 async function chatCompletion(model, messages, maxTokens = 4096) {
-  const requestBody = { model, messages, max_tokens: maxTokens, temperature: 0.3 }
+  // v2.7.2 — the GPT-5.6 family (and GPT-6 after it) rejects the old token-limit parameter name
+  // with a 400 (it wants `max_completion_tokens` instead) and, like OpenAI's
+  // earlier reasoning-tier models (o1/o3), does not accept a custom sampling
+  // temperature either — only the default is supported, so it's omitted
+  // rather than sent as 0.3.
+  const requestBody = { model, messages, max_completion_tokens: maxTokens }
   console.log('[NeuroNote] API request:', { model, maxTokens, messageCount: messages.length, systemPrompt: messages[0]?.content?.slice(0, 100) })
   console.log('[NeuroNote] User content length:', messages[messages.length - 1]?.content?.length || 0, 'chars')
 
@@ -34,7 +47,7 @@ async function chatCompletion(model, messages, maxTokens = 4096) {
   console.log('[NeuroNote] Raw response (first 500 chars):', content?.slice(0, 500))
 
   if (finishReason === 'length') {
-    console.warn('[NeuroNote] WARNING: Response was truncated (finish_reason=length). Increase max_tokens.')
+    console.warn('[NeuroNote] WARNING: Response was truncated (finish_reason=length). Increase max_completion_tokens.')
   }
 
   const cost = (MODEL_COSTS[model] || 0.003) * ((data.usage?.total_tokens || 1000) / 1000)
@@ -101,7 +114,11 @@ Action item field rules:
 - "dueDate": resolve relative dates against today's date (${today}). "tomorrow" is the next calendar day, "Friday" is the next upcoming Friday, "end of month" is the last day of the current month, "next week" is 7 days from today. If no date is mentioned at all, use null.
 - "dueTime": a 24-hour "HH:MM" time when a specific time is stated, otherwise null.
 - "suggestedType": use "event" when the item mentions a meeting, call, sync, demo, or a scheduled time. Use "task" when the item is to send, email, follow up, prepare, review, or check with someone. When neither clearly applies, default to "task".
-- "duration": event length in minutes. Default to 30, but use 60 when the word "meeting" appears in the item.`
+- "duration": event length in minutes. Default to 30, but use 60 when the word "meeting" appears in the item.
+
+${WRITING_STYLE_RULES}
+
+${ACTION_ITEM_STYLE_RULES}`
     },
     { role: 'user', content: `Summarize this meeting transcript:\n\n${transcript}` }
   ], 4096)
@@ -111,10 +128,14 @@ Action item field rules:
 }
 
 export async function generateFlashcards(transcript) {
-  const content = await chatCompletion(MODEL_LUNA, [
+  const content = await chatCompletion(OPENAI_MODELS.luna, [
     {
       role: 'system',
-      content: 'Given a meeting transcript, return a JSON object with two keys: flashcards (array of {question, answer} pairs covering key concepts), quiz (array of {question, answer, explanation} for self-testing). Return ONLY valid JSON, no markdown fences.'
+      content: `Given a meeting transcript, return a JSON object with two keys: flashcards (array of {question, answer} pairs covering key concepts), quiz (array of {question, answer, explanation} for self-testing). Return ONLY valid JSON, no markdown fences.
+
+${STUDY_MATERIAL_STYLE_RULES}
+
+${WRITING_STYLE_RULES}`
     },
     { role: 'user', content: transcript }
   ])
@@ -122,10 +143,14 @@ export async function generateFlashcards(transcript) {
 }
 
 export async function detectActionItems(partialTranscript) {
-  const content = await chatCompletion(MODEL_LUNA, [
+  const content = await chatCompletion(OPENAI_MODELS.luna, [
     {
       role: 'system',
-      content: 'Analyze this partial meeting transcript. Return ONLY a JSON array of NEW action items detected (commitments, promises, decisions with owners and due dates if mentioned). Format: [{action, owner, due}]. Return empty array if nothing new. Return ONLY valid JSON.'
+      content: `Analyze this partial meeting transcript. Return ONLY a JSON array of NEW action items detected (commitments, promises, decisions with owners and due dates if mentioned). Format: [{action, owner, due}]. Return empty array if nothing new. Return ONLY valid JSON.
+
+${WRITING_STYLE_RULES}
+
+${ACTION_ITEM_STYLE_RULES}`
     },
     { role: 'user', content: partialTranscript }
   ], 1024)
@@ -169,20 +194,24 @@ export async function generateAnswer(question, contextChunks, conversationHistor
   const messages = [
     {
       role: 'system',
-      content: 'You are NeuroNote, an AI assistant with access to the user\'s meeting notes. Answer questions based on the provided context from their notes. Cite which notes your answer comes from using [Note X] references. Be concise and helpful.'
+      content: `You are NeuroNote, an AI assistant with access to the user's meeting notes. Answer questions based on the provided context from their notes. Cite which notes your answer comes from using [Note X] references. Be concise and helpful.
+
+${WRITING_STYLE_RULES}`
     },
     { role: 'user', content: `Context from meeting notes:\n\n${context}` },
     ...conversationHistory,
     { role: 'user', content: question }
   ]
-  return await chatCompletion(MODEL_TERRA, messages)
+  return await chatCompletion(OPENAI_MODELS.terra, messages)
 }
 
 export async function gradeAnswer(question, correctAnswer, userAnswer) {
-  const content = await chatCompletion(MODEL_LUNA, [
+  const content = await chatCompletion(OPENAI_MODELS.luna, [
     {
       role: 'system',
-      content: 'Grade this answer. Reply with JSON: {correct: boolean, feedback: string}'
+      content: `Grade this answer. Reply with JSON: {correct: boolean, feedback: string}
+
+${WRITING_STYLE_RULES}`
     },
     {
       role: 'user',

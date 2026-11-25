@@ -1,10 +1,10 @@
 # NeuroNote — Technical Reference
 
-Implementation notes for NeuroNote Meeting OS v2.6.1: how each subsystem works, every storage key it
+Implementation notes for NeuroNote Meeting OS v2.7.1: how each subsystem works, every storage key it
 writes, and the reasoning behind the trickier decisions. For installation and day-to-day use, start at the
 [project README](../README.md).
 
-AI-powered meeting note-taking app with discreet screensaver recording, background-safe recording, chunked live transcription, speaker diarization, live action items, flashcard generation, conversational Q&A across your entire note archive, one-tap push of action items to Google Calendar and Google Tasks or to Outlook Calendar and Microsoft To Do, and a tap-to-correct learning dictionary that teaches NeuroNote how your names are spelled. As of v2.6 both Google and Microsoft sign-ins persist for weeks and refresh themselves silently.
+AI-powered meeting note-taking app with discreet screensaver recording, background-safe recording, chunked live transcription, speaker diarization, live action items, flashcard generation, conversational Q&A across your entire note archive, one-tap push of action items to Google Calendar and Google Tasks or to Outlook Calendar and Microsoft To Do, and a tap-to-correct learning dictionary that teaches NeuroNote how your names are spelled. As of v2.6 both Google and Microsoft sign-ins persist for weeks and refresh themselves silently. As of v2.7 every AI feature can run on OpenAI or on Google Gemini — pick one in **System → AI Provider**.
 
 ## Quick Start
 
@@ -19,10 +19,14 @@ Open http://localhost:5173 in your browser.
 
 The app works without any API keys using browser-native speech recognition and local extractive summarization. For full AI features:
 
-### OpenAI API Key
-- Go to **System** tab → **AI Engine** section
-- Paste your OpenAI API key (starts with `sk-`)
-- Enables: GPT-5.6 Terra/Sol summaries, flashcard generation, live action items, photo OCR, Ask NeuroNote Q&A
+### AI Provider — OpenAI or Gemini (v2.7)
+- Go to **System** tab → **AI Provider** section
+- Pick **OpenAI** or **Gemini**, then paste that provider's key in the section that appears below the picker
+- **OpenAI**: key starts with `sk-`. Enables GPT-6.1 Terra / GPT-6.2 Sol summaries, flashcard generation, live action items, photo OCR, Ask NeuroNote Q&A (the `OPENAI_MODELS` constant in `src/lib/openai.js`; the previous-generation 2024-era models are being retired).
+- **Gemini**: free key from [aistudio.google.com](https://aistudio.google.com), no credit card required. Enables the same feature set — summaries, flashcards, live action items, photo OCR, Ask NeuroNote Q&A — on `gemini-3.8-flash` (the `GEMINI_MODEL` constant in `src/lib/gemini.js`; the previous Flash Experimental model was retired June 1, 2026).
+- Both keys are kept in localStorage at once, so switching the picker back and forth never asks you to re-enter a key.
+- `src/lib/ai-provider.js` is the only place that reads the provider choice; every component imports the AI functions from there instead of from `openai.js`/`gemini.js` directly, so the two backends are interchangeable to the rest of the app.
+- Embeddings are provider-specific (OpenAI `text-embedding-3-small` is 1536-dim, Gemini `gemini-embedding-2` is requested at 768-dim) — `vectorSearch.js` skips a note's embedding for Ask NeuroNote if it was indexed under the other provider, rather than scoring across mismatched dimensions. Re-saving a note re-indexes it under whichever provider is active.
 
 ### AssemblyAI API Key (Optional)
 - Go to **System** tab → **Transcription** section
@@ -70,7 +74,7 @@ The app works without any API keys using browser-native speech recognition and l
 - **Archive** — Bento grid of all notes with search, filtering, and "Ask NeuroNote" conversational Q&A
 - **Capture** — Record meetings with live waveform, live transcript, live action items, photo capture, speaker-detection and Discreet Mode toggles, and a live chunk-transcription strip
 - **Session** — View summaries, speaker-labeled transcripts, flashcards with 3D flip, and AI-graded quizzes
-- **System** — API key management, Calendar & Tasks Integration (Google and/or Microsoft 365), Learned Corrections, Flagship Mode (GPT-5.6 Sol), usage tracking
+- **System** — API key management, Calendar & Tasks Integration (Google and/or Microsoft 365), Learned Corrections, Flagship Mode (GPT-6.2 Sol), usage tracking
 - **Persistent sign-in (v2.6)** — Google now uses the authorization code flow with PKCE, so one sign-in lasts for weeks and tokens refresh silently in the background, exactly as MSAL already did for Microsoft
 
 ### Microsoft 365: Outlook Calendar + Microsoft To Do (v2.5)
@@ -264,7 +268,7 @@ Saving runs one find-and-replace across the whole session — transcript, speake
 Replacement is whole-word and case-preserving: `smyth → smith`, `Smyth → Smith`, `SMYTH → SMITH`, while `Smythson` is left alone. A correct spelling with internal capitals (`AssemblyAI`, `iPhone`) is always inserted verbatim.
 
 **Applied to every future recording**
-1. Before transcription, the correct spellings are sent to AssemblyAI as `word_boost` with `boost_param: "high"`, so the model is steered toward them up front.
+1. Before transcription, the correct spellings are sent to AssemblyAI as `keyterms_prompt` (v2.8.1; phrases of up to 6 words, capped at 200 words in total), so the model is steered toward them up front. This replaced `word_boost` / `boost_param`, which the current models treat as legacy and answer by routing the request to the older model. Key terms add about $0.05 per audio hour, and are only sent when there is at least one learned correction.
 2. After transcription, the dictionary runs as a cleanup pass over the returned text and over each speaker's utterance. The Web Speech fallback and text-file uploads get the same cleanup pass.
 
 **Managing the dictionary** — **System → Learned Corrections** lists every entry (`wrong → right`, with a use count), lets you delete one with **×**, pre-load a correction with **+ Add Manually** before it ever comes up, or wipe the list with **Clear All**. Entries live at `neuronote:corrections` in localStorage.
@@ -282,11 +286,11 @@ Every control in the mobile UI is at least 44x44px — Apple's HIG minimum — a
 
 | Feature | Model | Cost |
 |---------|-------|------|
-| Summaries & OCR | GPT-5.6 Terra (default) | ~$0.20/session |
-| Flagship Mode | GPT-5.6 Sol | ~$0.27/session |
-| Flashcards & Live Actions | GPT-5.6 Luna | ~$0.02/min |
+| Summaries & OCR | GPT-6.1 Terra (default) | ~$0.20/session (v2.7 estimate, not re-measured for GPT-6) |
+| Flagship Mode | GPT-6.2 Sol | ~$0.27/session (v2.7 estimate, not re-measured for GPT-6) |
+| Flashcards & Live Actions | GPT-6 Luna | ~$0.02/min (v2.7 estimate, not re-measured for GPT-6) |
 | Embeddings | text-embedding-3-small | ~$0.02/1M tokens |
-| Transcription | AssemblyAI Universal-2 | ~$0.006/min |
+| Transcription | AssemblyAI STT 3.7 (`assemblyai-stt-3-7`, falling back to `universal-2` for languages it does not cover) | ~$0.21/hr list price, +$0.02/hr with speaker labels, +$0.05/hr with key terms |
 
 ## Deploy to Vercel
 
@@ -326,6 +330,8 @@ The app is installable as a Progressive Web App. On mobile, use "Add to Home Scr
 | `neuronote:notes` | All saved notes |
 | `neuronote:settings` | App settings |
 | `neuronote:apikey:openai` | OpenAI API key |
+| `neuronote:gemini:apikey` | Gemini API key (v2.7) — plain string, not JSON-wrapped like the keys above |
+| `neuronote:ai:provider` | Selected AI provider: `openai` (default) or `gemini` (v2.7) |
 | `neuronote:apikey:assemblyai` | AssemblyAI API key |
 | `neuronote:embeddings` | Vector embeddings for Q&A |
 | `neuronote:usage` | API usage tracking |

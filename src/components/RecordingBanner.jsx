@@ -46,17 +46,17 @@ export default function RecordingBanner() {
           transition={{ duration: 0.2 }}
         >
           <div className="glass pointer-events-auto flex items-center gap-2 pl-3 pr-1 py-1 shadow-md"
-            style={{ borderColor: '#dc262655' }}>
+            style={{ borderColor: 'rgba(255,45,85,0.45)' }}>
             <button
               onClick={() => navigateToTab('capture')}
               className="tap-target -my-2 flex items-center gap-2 pr-1"
               aria-label="Return to the capture tab"
             >
               <span
-                className={`w-2.5 h-2.5 rounded-full bg-red ${isPaused ? '' : 'dot-pulse-fast'}`}
-                style={{ background: '#dc2626' }}
+                className={`w-2.5 h-2.5 rounded-full bg-accent ${isPaused ? '' : 'dot-pulse-fast'}`}
+                style={{ background: '#ff2d55', boxShadow: '0 0 10px #ff2d55' }}
               />
-              <span className="font-mono uppercase text-[11px] tracking-wider font-bold whitespace-nowrap">
+              <span className="font-mono text-xs font-medium font-bold whitespace-nowrap">
                 {isPaused ? 'Paused' : 'Recording'} — {formatDuration(elapsedSeconds)}
               </span>
             </button>
@@ -65,7 +65,7 @@ export default function RecordingBanner() {
                 are ambiguous to a screen reader. */}
             <button
               onClick={handleStop}
-              className="tap-target -my-2 flex items-center justify-center text-muted hover:text-red text-base leading-none"
+              className="tap-target -my-2 flex items-center justify-center text-muted hover:text-accent text-base leading-none"
               aria-label="Stop recording from banner"
             >
               ×

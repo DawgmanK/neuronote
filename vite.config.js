@@ -13,12 +13,12 @@ export default defineConfig({
       manifest: {
         name: 'NeuroNote Meeting OS',
         short_name: 'NeuroNote',
-        version: '2.6.1',
-        description: 'AI-powered meeting notes with discreet screensaver recording, background-safe recording, chunked live transcription, speaker diarization, live action items, tap-to-correct learning dictionary, persistent Google and Microsoft sign-in, and Google Calendar + Tasks or Outlook Calendar + Microsoft To Do sync',
+        version: '2.8.1',
+        description: 'AI-powered meeting notes with discreet screensaver recording, background-safe recording, chunked live transcription, speaker diarization, live action items, tap-to-correct learning dictionary, persistent Google and Microsoft sign-in, Google Calendar + Tasks or Outlook Calendar + Microsoft To Do sync, and a choice of OpenAI or Google Gemini as the AI provider',
         start_url: '/',
         display: 'standalone',
-        background_color: '#f5f0e8',
-        theme_color: '#dc2626',
+        background_color: '#000000',
+        theme_color: '#000000',
         orientation: 'portrait-primary',
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },

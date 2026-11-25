@@ -6,7 +6,7 @@ An AI-powered meeting note-taking app for sales professionals, consultants, and 
 
 - 🎙️ Records meetings on your phone or laptop
 - ✍️ Transcribes with speaker diarization (AssemblyAI)
-- 🧠 Generates summaries, key points, action items, flashcards, and quizzes (OpenAI)
+- 🧠 Generates summaries, key points, action items, flashcards, and quizzes — pick OpenAI (GPT-6) or Google Gemini (Gemini 4 Hydrogen, free tier) as your AI provider
 - 📅 Sends action items directly to Google Calendar or Outlook Calendar
 - ✓ Sends tasks to Google Tasks or Microsoft To Do
 - 🔄 Auto-refreshing sign-in — connect once, stay connected
@@ -31,14 +31,14 @@ Click the button below. Vercel will guide you through:
 ## Setup — 15 minutes
 
 You'll need free accounts at:
-- **OpenAI** (openai.com) — pay-as-you-go, ~$2-5/month typical use
+- **OpenAI** (openai.com) — pay-as-you-go, ~$2-5/month typical use — **or** **Google AI Studio** (aistudio.google.com) for Gemini, free with no credit card required
 - **AssemblyAI** (assemblyai.com) — $50 free credits at signup (~130 hrs)
 - **Google Cloud OR Microsoft Azure** (optional — for Calendar/Tasks integration)
 
 After deploying:
 1. Open your app URL
-2. Go to SYSTEM tab
-3. Enter your OpenAI API key
+2. Open Settings (bottom right)
+3. Under AI Provider, pick OpenAI or Gemini and enter that provider's API key
 4. Enter your AssemblyAI API key
 5. (Optional) Set up Google or Microsoft OAuth Client ID for Calendar integration
 6. Start recording
@@ -55,27 +55,29 @@ npm run dev
 Open http://localhost:5173. `npm run build` writes the production bundle to `dist/`.
 
 Nothing needs configuring before the first run — the app reads no build-time environment variables, so there
-is no `.env` file to fill in. Every key is entered in the SYSTEM tab. See `.env.example` for the details.
+is no `.env` file to fill in. Every key is entered in Settings. See `.env.example` for the details.
 
 ## Your data, your keys, your bill
 
 - All API keys are stored in your browser's localStorage — never sent to any server
 - Recordings, transcripts, and summaries stay on YOUR device
-- API costs bill directly to YOUR OpenAI/AssemblyAI accounts
+- API costs bill directly to YOUR OpenAI/Gemini/AssemblyAI accounts
 - The developer of this app has ZERO access to your data, keys, or usage
 
 ## Cost
 
-Realistic real-world usage:
+Realistic real-world usage with OpenAI:
 - 2-3 meetings per week: **~$2-5/month**
 - Daily use with long meetings: **~$10-15/month**
 - Compare to HyNote and similar: **$99/year to $30/month**
+
+With Gemini instead of OpenAI, AI costs drop to **$0/month** — Google AI Studio's free tier covers summaries, flashcards, Q&A, and photo OCR at typical usage levels.
 
 ## Tech stack
 
 - React + Vite
 - AssemblyAI (transcription with speaker diarization)
-- OpenAI GPT-4o (summaries, action items, Q&A)
+- OpenAI GPT-6 **or** Google Gemini 4 Hydrogen (summaries, action items, flashcards, Q&A, photo OCR — your choice, set in Settings)
 - Google Calendar/Tasks API OR Microsoft Graph API (with auto-refresh tokens)
 - IndexedDB (persistent recording storage)
 - Progressive Web App (PWA)

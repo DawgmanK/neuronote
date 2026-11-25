@@ -5,7 +5,7 @@ const BASE = 'https://api.assemblyai.com/v2'
 
 function getKey() {
   const key = getApiKey('assemblyai')
-  if (!key) throw new Error('AssemblyAI API key not configured. Add it in System settings.')
+  if (!key) throw new Error('AssemblyAI API key not configured. Add it in Settings.')
   return key
 }
 
@@ -27,26 +27,99 @@ export async function uploadAudio(blob) {
   return data.upload_url
 }
 
-export async function requestTranscript(audioUrl, speakerLabels = true) {
-  const body = { audio_url: audioUrl, speaker_labels: speakerLabels }
+// v2.8.1 — the speech model is named explicitly. Until now the request named
+// none and rode whatever default the account had, which AssemblyAI changes on
+// its own schedule (accounts on the older Pro default move on 2026-12-08).
+// Ids confirmed against the submit API reference on 2026-11-24. Universal-2 is
+// listed second so audio in a language the primary model does not cover is
+// still transcribed instead of failing.
+export const SPEECH_MODEL_PRIMARY = 'assemblyai-stt-3-7'
+export const SPEECH_MODEL_FALLBACK = 'universal-2'
+export const SPEECH_MODELS = [SPEECH_MODEL_PRIMARY, SPEECH_MODEL_FALLBACK]
 
-  // v2.2 — steer the model toward spellings the user has already taught us.
-  const boost = getBoostList()
-  if (boost.length > 0) {
-    body.word_boost = boost
-    body.boost_param = 'high'
-    console.log(`[NeuroNote:Corrections] Boosting ${boost.length} learned term(s) in AssemblyAI request:`, boost.join(', '))
-  } else {
-    console.log('[NeuroNote:Corrections] No learned terms to boost')
+// List prices in dollars per hour of audio (assemblyai.com/pricing, 2026-11).
+const HOURLY_RATE = { [SPEECH_MODEL_PRIMARY]: 0.21, [SPEECH_MODEL_FALLBACK]: 0.15 }
+const SPEAKER_LABELS_RATE = 0.02
+const KEYTERMS_RATE = 0.05
+
+// Key terms: at most 6 words per phrase. The word budget is held to the
+// fallback model's limit (200) so the same list is valid on either model.
+const KEYTERM_MAX_WORDS_PER_PHRASE = 6
+const KEYTERM_WORD_BUDGET = 200
+
+/**
+ * v2.8.1 — the learned corrections, shaped for AssemblyAI's `keyterms_prompt`.
+ *
+ * This replaces `word_boost` / `boost_param`, which the current models treat as
+ * legacy: sending them quietly routed the whole request to the older model.
+ */
+export function getKeyterms() {
+  const terms = []
+  let words = 0
+  for (const raw of getBoostList()) {
+    const term = (raw || '').trim()
+    if (!term) continue
+    const count = term.split(/\s+/).length
+    if (count > KEYTERM_MAX_WORDS_PER_PHRASE) continue
+    if (words + count > KEYTERM_WORD_BUDGET) break
+    terms.push(term)
+    words += count
   }
+  return terms
+}
 
+/** Estimated cost of one finished transcript, from what was actually used. */
+export function estimateTranscriptionCost(result) {
+  const hours = (result?.audio_duration || 60) / 3600
+  let rate = HOURLY_RATE[result?.speech_model_used] ?? HOURLY_RATE[SPEECH_MODEL_PRIMARY]
+  if (result?.speaker_labels) rate += SPEAKER_LABELS_RATE
+  const keyterms = Array.isArray(result?.keyterms_prompt) ? result.keyterms_prompt : getKeyterms()
+  if (keyterms.length > 0) rate += KEYTERMS_RATE
+  return rate * hours
+}
+
+async function postTranscript(body) {
   const res = await fetch(`${BASE}/transcript`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body)
   })
-  if (!res.ok) throw new Error(`Transcript request failed: ${res.status}`)
-  return await res.json()
+  if (res.ok) return { ok: true, data: await res.json() }
+  let detail = ''
+  try { detail = (await res.text()).slice(0, 300) } catch { /* body unreadable */ }
+  return { ok: false, status: res.status, detail }
+}
+
+export async function requestTranscript(audioUrl, speakerLabels = true) {
+  const body = { audio_url: audioUrl, speaker_labels: speakerLabels, speech_models: SPEECH_MODELS }
+
+  // v2.2 — steer the model toward spellings the user has already taught us.
+  const keyterms = getKeyterms()
+  if (keyterms.length > 0) {
+    body.keyterms_prompt = keyterms
+    console.log(`[NeuroNote:Corrections] Sending ${keyterms.length} learned term(s) to AssemblyAI as key terms:`, keyterms.join(', '))
+  } else {
+    console.log('[NeuroNote:Corrections] No learned terms to send')
+  }
+
+  let attempt = await postTranscript(body)
+
+  // A 400 here means the account rejected the request as written — most likely
+  // the model name or the key terms. A meeting must never be lost to that, so
+  // the request is sent once more in its plainest form, on the account's own
+  // default model, and the downgrade is logged loudly.
+  if (!attempt.ok && attempt.status === 400) {
+    console.warn(
+      `[NeuroNote:AssemblyAI] Request with speech_models ${JSON.stringify(SPEECH_MODELS)} was rejected (400): ${attempt.detail} ` +
+      '— retrying on the account default model without key terms'
+    )
+    attempt = await postTranscript({ audio_url: audioUrl, speaker_labels: speakerLabels })
+  }
+
+  if (!attempt.ok) {
+    throw new Error(`Transcript request failed: ${attempt.status}${attempt.detail ? ` — ${attempt.detail}` : ''}`)
+  }
+  return attempt.data
 }
 
 /**
@@ -65,7 +138,10 @@ export async function getTranscriptStatus(transcriptId) {
 export async function pollTranscript(transcriptId) {
   while (true) {
     const data = await getTranscriptStatus(transcriptId)
-    if (data.status === 'completed') return data
+    if (data.status === 'completed') {
+      console.log(`[NeuroNote:AssemblyAI] Transcript ${transcriptId} completed on ${data.speech_model_used || 'an unreported model'}`)
+      return data
+    }
     if (data.status === 'error') throw new Error(`Transcription error: ${data.error}`)
     await new Promise(r => setTimeout(r, 3000))
   }
@@ -134,31 +210,6 @@ export async function transcribeAudio(blob, options = {}) {
   const uploadUrl = await uploadAudio(blob)
   const { id } = await requestTranscript(uploadUrl, speakerLabels)
   const result = await pollTranscript(id)
-  addUsage(0.006 * (result.audio_duration || 60) / 60, 'assemblyai')
+  addUsage(estimateTranscriptionCost(result), 'assemblyai')
   return applyCorrectionsToResult(result)
-}
-
-export function connectRealtime(onTranscript) {
-  const key = getApiKey('assemblyai')
-  if (!key) throw new Error('AssemblyAI key required for real-time transcription')
-
-  const ws = new WebSocket(`wss://api.assemblyai.com/realtime/ws?sample_rate=16000&token=${key}`)
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data)
-    if (data.message_type === 'FinalTranscript' && data.text) {
-      onTranscript(data.text)
-    }
-  }
-
-  ws.onerror = (err) => console.error('AssemblyAI WS error:', err)
-
-  return {
-    send: (audioData) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ audio_data: btoa(String.fromCharCode(...new Uint8Array(audioData))) }))
-      }
-    },
-    close: () => ws.close()
-  }
 }

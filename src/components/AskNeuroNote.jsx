@@ -1,38 +1,55 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getEmbeddings } from '../lib/storage'
-import { generateEmbedding, generateAnswer } from '../lib/openai'
+import { generateEmbedding, generateAnswer, hasActiveApiKey } from '../lib/ai-provider'
 import { searchNotes } from '../lib/vectorSearch'
 
-export default function AskNeuroNote({ onClose, notes }) {
+/**
+ * Conversational Q&A over the whole archive.
+ *
+ * v2.8 — opened from HOME's search bar rather than a separate button. Whatever
+ * the user typed arrives as `initialQuestion` and is asked immediately, and the
+ * meetings an answer drew on are tappable: `onOpenNote` jumps straight to one.
+ */
+export default function AskNeuroNote({ onClose, notes, initialQuestion = '', onOpenNote }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState(null)
   const chatRef = useRef(null)
+  const messagesRef = useRef(messages)
+  const busyRef = useRef(false)
+  const autoAsked = useRef(false)
+
+  useEffect(() => { messagesRef.current = messages }, [messages])
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
-  }, [messages])
+  }, [messages, isLoading])
 
-  const handleSubmit = async (e) => {
-    e?.preventDefault()
-    if (!input.trim() || isLoading) return
+  const askQuestion = useCallback(async (raw) => {
+    const question = (raw || '').trim()
+    if (!question || busyRef.current) return
+    busyRef.current = true
 
-    const question = input.trim()
-    setInput('')
-    setError(null)
+    const priorMessages = messagesRef.current
     setMessages(prev => [...prev, { role: 'user', content: question }])
     setIsLoading(true)
 
     try {
+      if (!hasActiveApiKey()) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: 'Ask needs an AI key. Add one in Settings and your meetings become searchable by meaning.'
+        }])
+        return
+      }
+
       const embeddings = getEmbeddings()
       if (embeddings.length === 0) {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: 'I don\'t have any indexed notes yet. Record or upload some content first, and make sure you have an OpenAI API key configured for embeddings.'
+          content: 'None of your meetings are indexed yet. Record or upload one with an AI key saved, and it becomes searchable here.'
         }])
-        setIsLoading(false)
         return
       }
 
@@ -42,64 +59,97 @@ export default function AskNeuroNote({ onClose, notes }) {
         return { text: r.text, noteTitle: note?.title || 'Untitled', noteId: r.noteId }
       })
 
-      const history = messages.filter(m => m.role === 'assistant').length > 0
-        ? messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
+      const history = priorMessages.some(m => m.role === 'assistant')
+        ? priorMessages.slice(-6).map(m => ({ role: m.role, content: m.content }))
         : []
 
       const answer = await generateAnswer(question, contextChunks, history)
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: answer,
-        sources: contextChunks.slice(0, 3)
-      }])
+
+      // One chip per meeting, however many passages it contributed.
+      const seen = new Set()
+      const sources = contextChunks.filter(c => {
+        if (seen.has(c.noteId)) return false
+        seen.add(c.noteId)
+        return true
+      }).slice(0, 3)
+
+      setMessages(prev => [...prev, { role: 'assistant', content: answer, sources }])
     } catch (err) {
-      setError(err.message)
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Sorry, I couldn't process that: ${err.message}`
+        content: `That didn't go through: ${err.message}`,
+        failed: true
       }])
     } finally {
+      busyRef.current = false
       setIsLoading(false)
     }
+  }, [notes])
+
+  // Ask whatever the user typed on HOME, once. The latch survives StrictMode's
+  // double-mounted effect, which would otherwise send the question twice.
+  useEffect(() => {
+    if (autoAsked.current || !initialQuestion.trim()) return
+    autoAsked.current = true
+    askQuestion(initialQuestion)
+  }, [initialQuestion, askQuestion])
+
+  const handleSubmit = (e) => {
+    e?.preventDefault()
+    if (!input.trim() || isLoading) return
+    const question = input
+    setInput('')
+    askQuestion(question)
+  }
+
+  const openSource = (noteId) => {
+    const note = notes.find(n => n.id === noteId)
+    if (note && onOpenNote) onOpenNote(note)
   }
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
       <motion.div
-        className="relative w-full max-w-2xl h-[80vh] rounded-2xl flex flex-col overflow-hidden glass"
-        style={{ background: 'rgba(245, 240, 232, 0.95)' }}
-        initial={{ y: 50, opacity: 0 }}
+        className="sheet relative w-full max-w-2xl h-[88dvh] sm:h-[80vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden"
+        initial={{ y: 60, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 50, opacity: 0 }}
+        exit={{ y: 60, opacity: 0 }}
+        transition={{ type: 'spring', damping: 28, stiffness: 260 }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Ask NeuroNote"
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-red/10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-mono font-bold text-sm"
-              style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}>
-              ?
-            </div>
-            <h2 className="font-mono uppercase text-sm font-bold tracking-wider">Ask NeuroNote</h2>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="tap-target -m-1.5 flex items-center justify-center">
-            <span className="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center text-muted hover:text-ink transition-colors">
-              ×
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <div className="flex items-center gap-2.5">
+            <span className="w-8 h-8 rounded-xl flex items-center justify-center text-accent bg-accent/10 border border-accent/30"
+              style={{ boxShadow: '0 0 16px rgba(42,168,255,0.25)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>
+              </svg>
             </span>
+            <div>
+              <h2 className="font-mono font-semibold text-[15px] leading-tight">Ask NeuroNote</h2>
+              <p className="text-xs text-muted">Answers from your own meetings</p>
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="tap-target -mr-2 flex items-center justify-center text-muted hover:text-ink">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M5 5l10 10M15 5 5 15"/></svg>
           </button>
         </div>
 
         {/* Chat */}
         <div ref={chatRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.length === 0 && (
-            <div className="text-center text-muted py-12">
-              <p className="font-mono uppercase text-sm mb-2">Ask anything about your notes</p>
-              <p className="text-xs">e.g., "What did we discuss about the budget last week?"</p>
+          {messages.length === 0 && !isLoading && (
+            <div className="text-center py-12">
+              <p className="font-mono font-semibold text-base mb-1">Ask anything about your meetings</p>
+              <p className="text-sm text-muted">Try “What did we decide about the budget?”</p>
             </div>
           )}
 
@@ -111,19 +161,27 @@ export default function AskNeuroNote({ onClose, notes }) {
                 animate={{ opacity: 1, y: 0 }}
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div className={`max-w-[80%] px-4 py-2.5 text-sm leading-relaxed ${
+                <div className={`max-w-[85%] px-4 py-2.5 text-sm leading-relaxed ${
                   msg.role === 'user'
-                    ? 'rounded-2xl rounded-br-sm text-white'
-                    : 'glass rounded-2xl rounded-bl-sm'
-                }`} style={msg.role === 'user' ? { background: 'linear-gradient(to right, #dc2626, #991b1b)' } : undefined}>
+                    ? 'btn-primary rounded-2xl rounded-br-md'
+                    : `rounded-2xl rounded-bl-md bg-white/[0.05] border ${msg.failed ? 'border-rec/40' : 'border-white/10'}`
+                }`}>
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                   {msg.sources?.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-white/20 flex flex-wrap gap-1">
-                      {msg.sources.map((s, j) => (
-                        <span key={j} className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">
-                          📄 {s.noteTitle}
-                        </span>
-                      ))}
+                    <div className="mt-3 pt-2.5 border-t border-white/10">
+                      <p className="section-label !text-[10px] mb-1.5">From</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {msg.sources.map(source => (
+                          <button
+                            key={source.noteId}
+                            onClick={() => openSource(source.noteId)}
+                            className="pill pill-accent hover:brightness-125 transition max-w-full"
+                          >
+                            <span className="truncate">{source.noteTitle}</span>
+                            <span aria-hidden="true">→</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -133,36 +191,38 @@ export default function AskNeuroNote({ onClose, notes }) {
 
           {isLoading && (
             <div className="flex justify-start">
-              <div className="glass rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1">
-                <span className="w-2 h-2 bg-red rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 bg-red rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 bg-red rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="rounded-2xl rounded-bl-md px-4 py-3.5 flex items-center gap-1.5 bg-white/[0.05] border border-white/10">
+                {[0, 150, 300].map(delay => (
+                  <span key={delay} className="w-1.5 h-1.5 bg-accent rounded-full animate-bounce"
+                    style={{ animationDelay: `${delay}ms`, boxShadow: '0 0 8px rgba(42,168,255,0.9)' }} />
+                ))}
               </div>
             </div>
           )}
         </div>
 
         {/* Input */}
-        <form onSubmit={handleSubmit} className="p-4 border-t border-red/10">
-          <div className="flex gap-2">
+        <form onSubmit={handleSubmit} className="p-3 border-t border-white/10"
+          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+          <div className="glass-input flex items-center gap-2 pl-4 pr-1.5 py-1.5">
             <input
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="Ask a question..."
-              className="glass-input flex-1 px-4 py-3 text-sm outline-none"
+              placeholder="Ask a follow-up"
+              aria-label="Ask a question"
+              className="flex-1 min-w-0 bg-transparent outline-none text-[15px] py-2"
               disabled={isLoading}
             />
             <motion.button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="w-11 h-11 flex-shrink-0 rounded-full flex items-center justify-center text-white disabled:opacity-40"
-              style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              aria-label="Send"
+              className="btn-primary w-9 h-9 flex-shrink-0 rounded-[10px] flex items-center justify-center disabled:opacity-35 disabled:shadow-none"
+              whileTap={{ scale: 0.94 }}
             >
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M10 3l-1.4 1.4L13.2 9H3v2h10.2l-4.6 4.6L10 17l7-7z" />
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 16V4M5 9l5-5 5 5" />
               </svg>
             </motion.button>
           </div>

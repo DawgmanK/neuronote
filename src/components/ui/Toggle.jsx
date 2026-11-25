@@ -17,7 +17,7 @@ export default function Toggle({ enabled, onChange, disabled, label }) {
     >
       <span
         className="relative block w-12 h-6 rounded-full transition-all"
-        style={{ background: enabled ? 'linear-gradient(to right, #dc2626, #991b1b)' : '#d1d5db' }}
+        style={{ background: enabled ? 'var(--grad-accent)' : '#23262d', boxShadow: enabled ? '0 0 14px rgba(42,168,255,0.45)' : 'inset 0 0 0 1px rgba(255,255,255,0.1)' }}
       >
         <motion.span
           className="absolute top-0.5 block w-5 h-5 rounded-full bg-white shadow"

@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import Archive from './components/Archive'
+import Home from './components/Home'
 import Capture from './components/Capture'
-import Session from './components/Session'
 import System from './components/System'
 import NoteDetail from './components/NoteDetail'
 import BottomNav from './components/BottomNav'
@@ -12,8 +11,8 @@ import ConfirmDialog from './components/ConfirmDialog'
 import StatusBadge from './components/ui/StatusBadge'
 import { ToastProvider, useToast } from './components/ui/Toast'
 import { RecordingProvider, useRecordingContext } from './contexts/RecordingContext'
-import { getNotes, saveNotes, getSettings, saveSettings, getApiKey } from './lib/storage'
-import { APP_VERSION } from './lib/version'
+import { getNotes, saveNotes, getSettings, saveSettings } from './lib/storage'
+import { hasActiveApiKey } from './lib/ai-provider'
 import { handleMicrosoftRedirect, hasRedirectResponse } from './services/microsoft-auth'
 import {
   REAUTH_EVENT as GOOGLE_REAUTH_EVENT,
@@ -31,7 +30,7 @@ import useEmbeddings from './hooks/useEmbeddings'
  *
  * Microsoft sends the user back to the app origin with the authorization code
  * in the URL fragment. MSAL only turns that into tokens when
- * handleRedirectPromise() runs, so the SYSTEM tab would otherwise paint
+ * handleRedirectPromise() runs, so Settings would otherwise paint
  * "disconnected" for a beat and then flip.
  *
  * The gate is only closed when the URL actually looks like a redirect
@@ -74,17 +73,32 @@ function useMicrosoftRedirectBootstrap() {
   return state
 }
 
+/** v2.8 — the chrome "N" tile: black face, chrome rim, chrome letter. */
+function LogoMark({ size = 32 }) {
+  return (
+    <div
+      className="chrome-ring rounded-xl flex items-center justify-center bg-panel-2 flex-shrink-0"
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <span className="chrome-text font-mono font-bold" style={{ fontSize: size * 0.5 }}>N</span>
+    </div>
+  )
+}
+
+/** Tabs that existed before v2.8 and may still arrive from a saved redirect. */
+function normalizeTab(tab) {
+  if (tab === 'capture' || tab === 'system') return tab
+  return 'archive'
+}
+
 /** Shown only on the return leg of a Microsoft redirect, for a few hundred ms. */
 function AuthReturnSplash() {
   return (
-    <div className="min-h-dvh flex flex-col items-center justify-center gap-3 noise-bg"
-      style={{ background: 'radial-gradient(ellipse at center, #f5f0e8 0%, #ede5d5 100%)' }}>
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-mono font-bold shadow-sm"
-        style={{ background: 'linear-gradient(135deg, #dc2626, #991b1b)' }}>
-        N
-      </div>
-      <p className="font-mono uppercase text-[10px] tracking-[0.2em] text-muted">
-        Finishing Microsoft sign-in...
+    <div className="min-h-dvh flex flex-col items-center justify-center gap-3 noise-bg app-bg">
+      <LogoMark size={40} />
+      <p className="section-label">
+        Finishing Microsoft sign-in…
       </p>
     </div>
   )
@@ -110,9 +124,8 @@ export default function App() {
 
 function AppShell({ msRedirect }) {
   // Landing back from Microsoft reopens the tab the user signed in from.
-  const [activeTab, setActiveTab] = useState(() => msRedirect?.returnTo || 'archive')
+  const [activeTab, setActiveTab] = useState(() => normalizeTab(msRedirect?.returnTo))
   const [notes, setNotes] = useState([])
-  const [currentNote, setCurrentNote] = useState(null)
   const [selectedNote, setSelectedNote] = useState(null)
   const [settings, setSettings] = useState({})
   const [isOnline, setIsOnline] = useState(navigator.onLine)
@@ -140,7 +153,7 @@ function AppShell({ msRedirect }) {
       })
     } else {
       toast.show({
-        message: 'Microsoft sign-in did not complete. Try again from the SYSTEM tab.',
+        message: 'Microsoft sign-in did not complete. Try again from Settings.',
         type: 'error',
         duration: 8000
       })
@@ -190,7 +203,7 @@ function AppShell({ msRedirect }) {
             promptSignIn('Please sign in to Google again.')
           } else if (result.missingClientId) {
             toastRef.current.show({
-              message: 'Your browser cleared the Google settings. Re-enter the OAuth Client ID in the SYSTEM tab.',
+              message: 'Your browser cleared the Google settings. Re-enter the OAuth Client ID in Settings.',
               type: 'error',
               duration: 12000,
               actionLabel: 'Open System',
@@ -217,15 +230,20 @@ function AppShell({ msRedirect }) {
     return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline) }
   }, [])
 
+  /**
+   * v2.8 — the SESSION tab is gone. A finished recording opens straight into
+   * the note it produced, over HOME, so "where did my meeting go?" always has
+   * the same answer.
+   */
   const handleSaveNote = useCallback((note) => {
     setNotes(prev => {
       const updated = [note, ...prev]
       saveNotes(updated)
       return updated
     })
-    setCurrentNote(note)
-    setActiveTab('session')
-    if (getApiKey('openai')) {
+    setActiveTab('archive')
+    setSelectedNote(note)
+    if (hasActiveApiKey()) {
       indexNewNote(note).catch(console.error)
     }
   }, [indexNewNote])
@@ -236,19 +254,39 @@ function AppShell({ msRedirect }) {
       saveNotes(updated)
       return updated
     })
-    if (currentNote?.id === updatedNote.id) setCurrentNote(updatedNote)
     if (selectedNote?.id === updatedNote.id) setSelectedNote(updatedNote)
-  }, [currentNote, selectedNote])
+  }, [selectedNote])
 
+  /**
+   * v2.8 — deleting is instant but never final: the toast carries an Undo that
+   * puts the note back where it was. A mis-tap on a phone used to cost a
+   * meeting.
+   */
   const handleDeleteNote = useCallback((noteId) => {
-    setNotes(prev => {
-      const updated = prev.filter(n => n.id !== noteId)
-      saveNotes(updated)
-      return updated
-    })
-    if (currentNote?.id === noteId) setCurrentNote(null)
+    const index = notes.findIndex(n => n.id === noteId)
+    if (index === -1) return
+    const removed = notes[index]
+    const updated = notes.filter(n => n.id !== noteId)
+    setNotes(updated)
+    saveNotes(updated)
     if (selectedNote?.id === noteId) setSelectedNote(null)
-  }, [currentNote, selectedNote])
+
+    toastRef.current.show({
+      message: `Deleted “${removed.title || 'Untitled'}”.`,
+      type: 'info',
+      duration: 8000,
+      actionLabel: 'Undo',
+      onAction: () => {
+        setNotes(prev => {
+          if (prev.some(n => n.id === removed.id)) return prev
+          const restored = [...prev]
+          restored.splice(Math.min(index, restored.length), 0, removed)
+          saveNotes(restored)
+          return restored
+        })
+      }
+    })
+  }, [notes, selectedNote])
 
   const handleSelectNote = useCallback((note) => {
     setSelectedNote(note)
@@ -259,17 +297,19 @@ function AppShell({ msRedirect }) {
     saveSettings(newSettings)
   }, [])
 
+  // The recorder still asks for tabs by their pre-v2.8 names.
+  const navigate = useCallback((tab) => setActiveTab(normalizeTab(tab)), [])
+
   return (
     <RecordingProvider
       settings={settings}
       onSaveNote={handleSaveNote}
-      onNavigate={setActiveTab}
+      onNavigate={navigate}
     >
       <AppFrame
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={navigate}
         notes={notes}
-        currentNote={currentNote}
         selectedNote={selectedNote}
         settings={settings}
         isOnline={isOnline}
@@ -285,7 +325,7 @@ function AppShell({ msRedirect }) {
 }
 
 function AppFrame({
-  activeTab, setActiveTab, notes, currentNote, selectedNote, settings, isOnline,
+  activeTab, setActiveTab, notes, selectedNote, settings, isOnline,
   onSaveNote, onUpdateNote, onDeleteNote, onSelectNote, onCloseNote, onUpdateSettings
 }) {
   // The header badge and the page glow now follow the global recorder rather
@@ -299,22 +339,15 @@ function AppFrame({
   }
 
   return (
-    <div className={`min-h-dvh relative noise-bg ${isRecording ? 'recording-pulse' : ''}`}
-      style={{ background: 'radial-gradient(ellipse at center, #f5f0e8 0%, #ede5d5 100%)' }}>
+    <div className={`min-h-dvh relative noise-bg app-bg ${isRecording ? 'recording-pulse' : ''}`}>
 
       {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-30 glass-nav">
-        <div className="flex items-center justify-between px-4 py-2 max-w-4xl mx-auto"
-          style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-mono font-bold text-sm shadow-sm"
-              style={{ background: 'linear-gradient(135deg, #dc2626, #991b1b)' }}>
-              N
-            </div>
-          </div>
-          <div className="text-center">
-            <h1 className="font-mono uppercase text-xs font-bold tracking-[0.2em] leading-none">NeuroNote</h1>
-            <p className="font-mono uppercase text-[8px] text-muted tracking-[0.15em]">Meeting OS v{APP_VERSION}</p>
+        <div className="flex items-center justify-between px-4 pb-2 max-w-4xl mx-auto"
+          style={{ paddingTop: 'max(10px, env(safe-area-inset-top))' }}>
+          <div className="flex items-center gap-2.5">
+            <LogoMark size={32} />
+            <span className="chrome-text font-mono font-bold text-[17px] tracking-tight leading-none">NeuroNote</span>
           </div>
           <StatusBadge status={getStatus()} />
         </div>
@@ -324,7 +357,7 @@ function AppFrame({
       <RecordingBanner />
 
       {/* Content */}
-      <main className="pt-16 pb-20 max-w-4xl mx-auto">
+      <main className="pt-[72px] pb-32 max-w-4xl mx-auto">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -334,13 +367,15 @@ function AppFrame({
             transition={{ duration: 0.2 }}
           >
             {activeTab === 'archive' && (
-              <Archive notes={notes} onSelectNote={onSelectNote} onDeleteNote={onDeleteNote} />
+              <Home
+                notes={notes}
+                onSelectNote={onSelectNote}
+                onDeleteNote={onDeleteNote}
+                onNavigate={setActiveTab}
+              />
             )}
             {activeTab === 'capture' && (
               <Capture onSaveNote={onSaveNote} settings={settings} />
-            )}
-            {activeTab === 'session' && (
-              <Session note={currentNote} onUpdateNote={onUpdateNote} />
             )}
             {activeTab === 'system' && (
               <System settings={settings} onUpdateSettings={onUpdateSettings} />
@@ -356,6 +391,8 @@ function AppFrame({
             note={selectedNote}
             onBack={onCloseNote}
             onUpdateNote={onUpdateNote}
+            onDeleteNote={onDeleteNote}
+            onOpenSettings={() => { onCloseNote(); setActiveTab('system') }}
           />
         )}
       </AnimatePresence>

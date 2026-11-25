@@ -22,14 +22,14 @@ export default function ConfirmDialog() {
       {request && (
         <motion.div
           className="fixed inset-0 z-[70] flex items-center justify-center px-6"
-          style={{ background: 'rgba(30, 25, 20, 0.35)', backdropFilter: 'blur(4px)' }}
+          style={{ background: 'rgba(0, 0, 0, 0.72)', backdropFilter: 'blur(4px)' }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={() => resolveConfirm(dismissValue)}
         >
           <motion.div
-            className="glass w-full max-w-sm p-5"
+            className="sheet rounded-2xl w-full max-w-sm p-5"
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -39,7 +39,7 @@ export default function ConfirmDialog() {
             aria-modal="true"
             aria-label={request.title}
           >
-            <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-2">{request.title}</h3>
+            <h3 className="font-mono font-semibold text-base text-ink mb-2">{request.title}</h3>
             {/* A div rather than a p: v2.4's legal notice passes a list, which
                 is not valid inside a paragraph. */}
             <div className="text-sm text-muted leading-snug mb-4">{request.message}</div>
@@ -49,14 +49,14 @@ export default function ConfirmDialog() {
                 <button
                   key={option.value}
                   onClick={() => resolveConfirm(option.value)}
-                  className={`tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono uppercase text-xs tracking-wider transition-colors ${
+                  className={`tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-medium transition-colors ${
                     option.primary
                       ? 'text-white'
                       : option.tone === 'danger'
-                        ? 'text-red border border-red/30 bg-white/40'
-                        : 'text-muted border border-black/10 bg-white/40 hover:text-ink'
+                        ? 'text-rec border border-rec/40 bg-rec/10'
+                        : 'btn-ghost'
                   }`}
-                  style={option.primary ? { background: 'linear-gradient(to right, #dc2626, #991b1b)' } : undefined}
+                  style={option.primary ? { background: 'var(--grad-accent)' } : undefined}
                 >
                   {option.label}
                 </button>

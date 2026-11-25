@@ -16,10 +16,10 @@ export function useToast() {
 }
 
 const ACCENT = {
-  success: '#16a34a',
-  error: '#dc2626',
-  info: '#991b1b',
-  progress: '#dc2626'
+  success: '#2dff9a',
+  error: '#ff2d55',
+  info: '#2aa8ff',
+  progress: '#2aa8ff'
 }
 
 export function ToastProvider({ children }) {
@@ -69,12 +69,12 @@ export function ToastProvider({ children }) {
     <ToastContext.Provider value={{ show, update, dismiss }}>
       {children}
       <div className="fixed left-0 right-0 z-[60] flex flex-col items-center gap-2 px-4 pointer-events-none"
-        style={{ bottom: 'calc(84px + env(safe-area-inset-bottom))' }}>
+        style={{ bottom: 'calc(96px + env(safe-area-inset-bottom))' }}>
         <AnimatePresence>
           {toasts.map(toast => (
             <motion.div
               key={toast.id}
-              className="glass px-4 py-3 w-full max-w-md pointer-events-auto flex items-start gap-3"
+              className="sheet rounded-2xl px-4 py-3 w-full max-w-md pointer-events-auto flex items-start gap-3"
               style={{ borderColor: `${ACCENT[toast.type] || ACCENT.info}55` }}
               initial={{ opacity: 0, y: 16, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -91,7 +91,7 @@ export function ToastProvider({ children }) {
                       href={toast.link}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-mono uppercase text-[10px] tracking-wider text-red hover:underline"
+                      className="font-mono text-xs font-medium text-accent hover:underline"
                     >
                       {toast.linkLabel} ↗
                     </a>
@@ -99,7 +99,7 @@ export function ToastProvider({ children }) {
                   {toast.actionLabel && toast.onAction && (
                     <button
                       onClick={() => { toast.onAction(); dismiss(toast.id) }}
-                      className="font-mono uppercase text-[10px] tracking-wider text-red hover:underline"
+                      className="font-mono text-xs font-medium text-accent hover:underline"
                     >
                       {toast.actionLabel}
                     </button>

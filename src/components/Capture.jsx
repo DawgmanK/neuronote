@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useRecordingContext, formatDuration } from '../contexts/RecordingContext'
 import Waveform from './ui/Waveform'
 import GlassCard from './ui/GlassCard'
-import Toggle from './ui/Toggle'
 import LiveActionItems from './LiveActionItems'
 import PhotoCapture from './PhotoCapture'
 import SegmentProgress from './SegmentProgress'
@@ -12,7 +11,7 @@ import { getApiKey, getItem, setItem } from '../lib/storage'
 import { getActiveModel } from '../lib/models'
 import { transcribeAudio } from '../lib/assemblyai'
 import { applyCorrections } from '../lib/corrections'
-import { generateSummary, generateFlashcards, extractImageText } from '../lib/openai'
+import { generateSummary, generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
 import { extractSummary } from '../lib/extractive'
 
 /** Set once the v2.4 legal notice has been acknowledged. */
@@ -40,7 +39,6 @@ export default function Capture({ onSaveNote, settings }) {
     segments,
     photos,
     processingStep,
-    generatedNote,
     liveTranscript,
     diarization,
     chunkedTranscription,
@@ -51,11 +49,11 @@ export default function Capture({ onSaveNote, settings }) {
     discardRecording,
     addPhoto,
     setDiarization,
-    clearGeneratedNote,
     discreetMode,
     discreetActive,
     setDiscreetMode,
     enterDiscreet,
+    navigateToTab,
     ask
   } = useRecordingContext()
 
@@ -63,7 +61,6 @@ export default function Capture({ onSaveNote, settings }) {
   const [showCamera, setShowCamera] = useState(false)
   const [uploadProcessing, setUploadProcessing] = useState(false)
   const [uploadStep, setUploadStep] = useState('')
-  const [uploadNote, setUploadNote] = useState(null)
   const transcriptRef = useRef(null)
 
   const fullLiveTranscript = useMemo(
@@ -73,7 +70,6 @@ export default function Capture({ onSaveNote, settings }) {
 
   const processing = isProcessing || uploadProcessing
   const currentStep = processingStep || uploadStep
-  const finishedNote = generatedNote || uploadNote
 
   /**
    * v2.4 — the one-time legal notice, shown the first time Discreet Mode is
@@ -93,7 +89,7 @@ export default function Capture({ onSaveNote, settings }) {
           </p>
           <ul className="list-disc pl-4 space-y-1 mb-2">
             <li><span className="font-bold text-ink">LEGAL</span> in Georgia and 36 other one-party consent states</li>
-            <li><span className="font-bold text-red">ILLEGAL</span> in 11 all-party consent states (CA, CT, DE, FL, IL, MD, MA, MT, NV, NH, PA, WA)</li>
+            <li><span className="font-bold text-accent">ILLEGAL</span> in 11 all-party consent states (CA, CT, DE, FL, IL, MD, MA, MT, NV, NH, PA, WA)</li>
             <li>Federal law is one-party consent</li>
           </ul>
           <p>
@@ -189,13 +185,13 @@ export default function Capture({ onSaveNote, settings }) {
       content = applyCorrections(await file.text())
     }
 
-    const openaiKey = getApiKey('openai')
+    const aiKeyConfigured = hasActiveApiKey()
     let summaryData = null
     let flashcardData = null
 
     try {
       setUploadStep('Summarizing...')
-      if (openaiKey) {
+      if (aiKeyConfigured) {
         console.log('[NeuroNote] Upload: calling generateSummary with', content.length, 'chars')
         summaryData = await generateSummary(content, getActiveModel(settings))
       } else {
@@ -207,7 +203,7 @@ export default function Capture({ onSaveNote, settings }) {
     }
 
     try {
-      if (openaiKey) {
+      if (aiKeyConfigured) {
         setUploadStep('Generating flashcards...')
         flashcardData = await generateFlashcards(content)
       }
@@ -233,7 +229,6 @@ export default function Capture({ onSaveNote, settings }) {
       type: 'upload'
     }
 
-    setUploadNote(note)
     setUploadProcessing(false)
     setUploadStep('')
     onSaveNote(note)
@@ -244,110 +239,115 @@ export default function Capture({ onSaveNote, settings }) {
     handleFileUpload(e.dataTransfer.files)
   }
 
-  const dismissFinishedNote = () => {
-    clearGeneratedNote()
-    setUploadNote(null)
-  }
+  const hasAiKey = hasActiveApiKey()
+  const hasTranscriptionKey = !!getApiKey('assemblyai') && !!settings?.useAssemblyAI
 
   return (
-    <div className={`px-4 pb-4 ${isRecording ? 'recording-pulse' : ''}`}>
-      {/* Mode toggle */}
-      <div className="flex justify-center mb-6">
-        <div className="flex gap-1 p-1 rounded-full bg-white/40 backdrop-blur">
-          {['record', 'upload'].map(m => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className="tap-target -my-2 flex items-center"
-            >
-              <span
-                className={`block px-5 py-1.5 rounded-full font-mono uppercase text-xs tracking-wider transition-all ${
-                  mode === m ? 'text-white' : 'text-muted hover:text-ink'
-                }`}
-                style={mode === m ? { background: 'linear-gradient(to right, #dc2626, #991b1b)' } : undefined}
+    <div className="px-4 pb-4">
+      {/* Mode switch — hidden once a recording is under way, when it would only
+          be something to mis-tap. */}
+      {!isRecording && !processing && (
+        <div className="flex justify-center mb-8">
+          <div className="flex gap-1 p-1 rounded-full bg-white/[0.05] border border-white/10" role="tablist" aria-label="Capture mode">
+            {[['record', 'Record'], ['upload', 'Upload a file']].map(([id, label]) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={mode === id}
+                onClick={() => setMode(id)}
+                className="tap-target -my-2 flex items-center"
               >
-                {m}
-              </span>
-            </button>
-          ))}
+                <span
+                  className={`block px-5 py-1.5 rounded-full font-mono text-[13px] font-medium transition-all ${
+                    mode === id ? 'bg-white/[0.12] text-ink chrome-ring' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  {label}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {mode === 'record' ? (
+      {mode === 'record' || isRecording || isProcessing ? (
         <div className="flex flex-col items-center">
-          {/* v2.3 — the "note saved" card no longer stands between the user and
-              the next recording. It sits above a record button that is always
-              live the moment processing finishes. */}
-          {finishedNote && !processing && (
+          {!isRecording && !processing && (
             <motion.div
-              className="w-full mb-6"
-              initial={{ opacity: 0, y: 20 }}
+              className="flex flex-col items-center w-full"
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
             >
-              <GlassCard className="text-center">
-                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-3">
-                  <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="#22c55e" strokeWidth="2"><path d="M5 10l3 3 7-7"/></svg>
-                </div>
-                <h3 className="font-mono uppercase text-sm font-bold mb-1">{finishedNote.title}</h3>
-                <p className="text-xs text-muted mb-3">Note saved successfully</p>
-                <button
-                  onClick={dismissFinishedNote}
-                  className="tap-target inline-flex items-center justify-center px-4 font-mono uppercase text-xs text-red tracking-wider hover:underline"
-                >
-                  Dismiss
-                </button>
-              </GlassCard>
-            </motion.div>
-          )}
-
-          {!isRecording && !processing && (
-            <motion.div className="flex flex-col items-center gap-6 w-full">
+              {/* The orb: chrome bezel, neon-red core. */}
               <motion.button
                 onClick={handleStartRecording}
-                className="w-24 h-24 rounded-full flex items-center justify-center text-white shadow-lg breathe"
-                style={{ background: 'linear-gradient(135deg, #dc2626, #991b1b)' }}
+                className="chrome-ring relative w-40 h-40 rounded-full flex items-center justify-center breathe"
+                style={{
+                  background: 'radial-gradient(circle at 50% 35%, #1b1d23 0%, #08090b 70%)',
+                  boxShadow: '0 0 70px rgba(255,45,85,0.22), inset 0 2px 0 rgba(255,255,255,0.08)'
+                }}
                 whileTap={{ scale: 0.95 }}
                 aria-label="Start recording"
               >
-                <svg width="32" height="32" viewBox="0 0 20 20" fill="currentColor">
-                  <circle cx="10" cy="10" r="6" />
-                </svg>
+                <span
+                  className="w-28 h-28 rounded-full flex items-center justify-center text-white"
+                  style={{ background: 'var(--grad-rec)', boxShadow: 'var(--glow-rec), inset 0 2px 6px rgba(255,255,255,0.35)' }}
+                >
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="3" width="6" height="11" rx="3" />
+                    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+                  </svg>
+                </span>
               </motion.button>
-              <p className="font-mono uppercase text-xs text-muted tracking-wider">Tap to record</p>
 
-              {/* v2.3 — speaker detection lives next to the record button so the
-                  choice is made before the meeting starts, not after. */}
-              <GlassCard hoverable={false} animate={false} className="w-full max-w-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="font-mono uppercase text-xs font-bold tracking-wider">Speaker Detection</h3>
-                    <p className="text-[11px] text-muted mt-0.5">
-                      {diarization ? 'ON — identifying who said what' : 'OFF — faster transcription'}
-                    </p>
-                  </div>
-                  <Toggle enabled={diarization} onChange={setDiarization} label="Speaker detection" />
-                </div>
-                <p className="text-[11px] text-muted leading-snug mt-2">
-                  OFF: faster transcription. ON: identifies who said what (best for interviews/calls with multiple people).
-                </p>
+              <p className="font-mono font-semibold text-lg mt-6">Tap to record</p>
+              <p className="text-sm text-muted mt-1 text-center max-w-xs">
+                Keeps recording if you switch tabs or lock your screen.
+              </p>
 
-                {/* v2.4 — Discreet Mode sits with Speaker Detection: both are
-                    decisions made before the meeting starts, not during it. */}
-                <div className="border-t border-black/5 mt-4 pt-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="font-mono uppercase text-xs font-bold tracking-wider">Discreet Mode</h3>
-                      <p className="text-[11px] text-muted mt-0.5">
-                        {discreetMode ? 'ON — screen hides the recording' : 'OFF — normal recording UI'}
-                      </p>
-                    </div>
-                    <Toggle enabled={discreetMode} onChange={handleDiscreetToggle} label="Discreet mode" />
-                  </div>
-                  <p className="text-[11px] text-muted leading-snug mt-2">
-                    Hides recording UI behind a screensaver. Double-tap middle-left to pause, middle-right to exit.
-                  </p>
-                </div>
-              </GlassCard>
+              {/* v2.8 — the two pre-meeting choices as switches, with one line
+                  of explanation that follows whichever is on. */}
+              <div className="grid grid-cols-2 gap-3 w-full max-w-sm mt-8">
+                {[
+                  { label: 'Speakers', on: diarization, toggle: () => setDiarization(!diarization), aria: 'Speaker detection' },
+                  { label: 'Discreet', on: discreetMode, toggle: () => handleDiscreetToggle(!discreetMode), aria: 'Discreet mode' }
+                ].map(option => (
+                  <button
+                    key={option.label}
+                    role="switch"
+                    aria-checked={option.on}
+                    aria-label={option.aria}
+                    onClick={option.toggle}
+                    className={`tap-target flex items-center justify-between gap-2 px-4 py-3 rounded-2xl border transition-all ${
+                      option.on ? 'border-accent/50 bg-accent/10' : 'border-white/10 bg-white/[0.04]'
+                    }`}
+                    style={option.on ? { boxShadow: '0 0 18px rgba(42,168,255,0.18)' } : undefined}
+                  >
+                    <span className="font-mono text-sm font-medium">{option.label}</span>
+                    <span className={`flex items-center gap-1.5 text-xs font-mono ${option.on ? 'text-accent' : 'text-muted'}`}>
+                      <span className="w-1.5 h-1.5 rounded-full"
+                        style={{ background: option.on ? '#2aa8ff' : '#4a4f59', boxShadow: option.on ? '0 0 8px #2aa8ff' : 'none' }} />
+                      {option.on ? 'On' : 'Off'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted leading-relaxed text-center max-w-sm mt-3">
+                {discreetMode
+                  ? 'Discreet: the screen goes dark while recording. Double-tap the left side to pause, the right side to come back.'
+                  : diarization
+                    ? 'Speakers: the transcript labels who said what. Best for calls and interviews.'
+                    : 'Speakers off: one voice, faster transcript.'}
+              </p>
+
+              {(!hasAiKey || !hasTranscriptionKey) && (
+                <button
+                  onClick={() => navigateToTab('system')}
+                  className="pill mt-5 !py-1.5 !px-3 !text-xs hover:text-ink transition-colors !whitespace-normal text-center"
+                >
+                  Basic mode — add {!hasAiKey && !hasTranscriptionKey ? 'your keys' : !hasAiKey ? 'an AI key' : 'a transcription key'} in Settings for {!hasAiKey && !hasTranscriptionKey ? 'accurate transcripts and AI summaries' : hasAiKey ? 'accurate transcripts' : 'AI summaries'} →
+                </button>
+              )}
             </motion.div>
           )}
 
@@ -358,10 +358,12 @@ export default function Capture({ onSaveNote, settings }) {
               animate={{ opacity: 1, y: 0 }}
             >
               <div className="text-center mb-4">
-                <p className="font-mono text-4xl font-bold text-ink">{formatDuration(elapsedSeconds)}</p>
-                <p className="font-mono uppercase text-[10px] text-red tracking-wider mt-1">
-                  {isPaused ? '// PAUSED' : '// RECORDING'}
+                <p className={`inline-flex items-center gap-2 font-mono text-sm font-medium ${isPaused ? 'text-muted' : 'text-rec'}`}>
+                  <span className={`w-2 h-2 rounded-full ${isPaused ? '' : 'dot-pulse-fast'}`}
+                    style={{ background: isPaused ? '#6c727d' : '#ff2d55', boxShadow: isPaused ? 'none' : '0 0 10px #ff2d55' }} />
+                  {isPaused ? 'Paused' : 'Recording'}
                 </p>
+                <p className="chrome-text font-mono text-6xl font-bold tracking-tight mt-1">{formatDuration(elapsedSeconds)}</p>
               </div>
 
               <div className="mb-4">
@@ -369,7 +371,7 @@ export default function Capture({ onSaveNote, settings }) {
               </div>
 
               {/* v2.3 — live proof that chunks are already being transcribed. */}
-              <div className="mb-5">
+              <div className="mb-6">
                 <SegmentProgress
                   segments={segments}
                   elapsedSeconds={elapsedSeconds}
@@ -377,61 +379,64 @@ export default function Capture({ onSaveNote, settings }) {
                   enabled={chunkedTranscription}
                 />
                 {chunkedTranscription && (
-                  <p className="text-[10px] text-muted font-mono tracking-wider mt-1">
-                    Transcribing in 5-minute chunks — speaker detection {diarization ? 'ON' : 'OFF'}
+                  <p className="text-xs text-muted mt-1.5">
+                    Transcribing every 5 minutes as you go · speakers {diarization ? 'on' : 'off'}
                   </p>
                 )}
               </div>
 
               {/* Controls */}
-              <div className="flex justify-center gap-4 mb-3">
+              <div className="flex justify-center items-center gap-6 mb-3">
                 <motion.button
                   onClick={isPaused ? resumeRecording : pauseRecording}
-                  className="w-14 h-14 rounded-full bg-white/65 backdrop-blur flex items-center justify-center border border-red/20"
+                  className="btn-ghost w-14 h-14 rounded-full flex items-center justify-center !text-ink"
                   whileTap={{ scale: 0.9 }}
                   aria-label={isPaused ? 'Resume recording' : 'Pause recording'}
                 >
                   {isPaused ? (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="#dc2626"><path d="M6 4l10 6-10 6z"/></svg>
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4l10 6-10 6z"/></svg>
                   ) : (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="#dc2626"><rect x="5" y="4" width="3" height="12" rx="1"/><rect x="12" y="4" width="3" height="12" rx="1"/></svg>
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4" width="3" height="12" rx="1"/><rect x="12" y="4" width="3" height="12" rx="1"/></svg>
                   )}
                 </motion.button>
 
                 <motion.button
                   onClick={stopRecording}
-                  className="w-14 h-14 rounded-full bg-red flex items-center justify-center text-white"
+                  className="relative w-[76px] h-[76px] rounded-full flex items-center justify-center text-white"
+                  style={{ background: 'var(--grad-rec)', boxShadow: 'var(--glow-rec)' }}
                   whileTap={{ scale: 0.9 }}
                   aria-label="Stop recording"
                 >
-                  <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><rect x="4" y="4" width="12" height="12" rx="2"/></svg>
+                  {!isPaused && <span className="orb-halo absolute inset-0 rounded-full border-2 border-rec" />}
+                  <svg width="24" height="24" viewBox="0 0 20 20" fill="currentColor"><rect x="4" y="4" width="12" height="12" rx="2.5"/></svg>
                 </motion.button>
 
                 <motion.button
                   onClick={() => setShowCamera(true)}
-                  className="w-14 h-14 rounded-full bg-white/65 backdrop-blur flex items-center justify-center border border-red/20"
+                  className="btn-ghost w-14 h-14 rounded-full flex items-center justify-center !text-ink"
                   whileTap={{ scale: 0.9 }}
                   aria-label="Capture a photo"
                 >
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#dc2626" strokeWidth="1.5"><rect x="2" y="5" width="16" height="11" rx="2"/><circle cx="10" cy="10.5" r="3"/><path d="M7 5l1-2h4l1 2"/></svg>
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="5" width="16" height="11" rx="2"/><circle cx="10" cy="10.5" r="3"/><path d="M7 5l1-2h4l1 2"/></svg>
                 </motion.button>
               </div>
+              <p className="text-center text-xs text-muted mb-2">Stop to save and summarize</p>
 
               <div className="flex justify-center gap-2 mb-6">
                 <button
                   onClick={() => discardRecording()}
-                  className="tap-target inline-flex items-center justify-center px-4 font-mono uppercase text-[10px] text-muted tracking-wider hover:text-red"
+                  className="tap-target inline-flex items-center justify-center px-4 font-mono text-xs text-muted hover:text-rec transition-colors"
                 >
-                  Discard
+                  Discard recording
                 </button>
                 {/* v2.4 — re-enter the screensaver mid-recording, e.g. after
                     double-tapping out of it to check on the transcript. */}
                 {discreetMode && (
                   <button
                     onClick={enterDiscreet}
-                    className="tap-target inline-flex items-center justify-center px-4 font-mono uppercase text-[10px] text-muted tracking-wider hover:text-red"
+                    className="tap-target inline-flex items-center justify-center px-4 font-mono text-xs text-muted hover:text-ink transition-colors"
                   >
-                    Hide Screen
+                    Hide screen
                   </button>
                 )}
               </div>
@@ -439,44 +444,32 @@ export default function Capture({ onSaveNote, settings }) {
               {/* Live transcript + Action items */}
               <div className="grid md:grid-cols-2 gap-4">
                 <GlassCard hoverable={false} animate={false}>
-                  <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-2">Live Transcript</h3>
-                  <div ref={transcriptRef} className="max-h-48 overflow-y-auto space-y-1">
+                  <h3 className="section-label mb-2">Live transcript</h3>
+                  <div ref={transcriptRef} className="max-h-48 overflow-y-auto space-y-1.5">
                     {liveTranscript.length === 0 ? (
-                      <p className="text-xs text-muted">Listening for speech...</p>
+                      <p className="text-sm text-muted">Listening for speech…</p>
                     ) : (
                       liveTranscript.map((t, i) => (
-                        <p key={i} className="text-xs">
-                          <span className="font-mono font-bold text-red">{t.speaker}:</span> {t.text}
+                        <p key={i} className="text-sm leading-relaxed">
+                          <span className="font-mono font-semibold text-accent">{t.speaker}</span> {t.text}
                         </p>
                       ))
                     )}
                   </div>
                 </GlassCard>
 
-                <div className="hidden md:block">
-                  <LiveActionItems
-                    transcript={fullLiveTranscript}
-                    isRecording={isRecording}
-                    enabled={settings?.liveActionItems}
-                    hasApiKey={!!getApiKey('openai')}
-                  />
-                </div>
-              </div>
-
-              {/* Mobile action items drawer */}
-              <div className="md:hidden mt-4">
                 <LiveActionItems
                   transcript={fullLiveTranscript}
                   isRecording={isRecording}
                   enabled={settings?.liveActionItems}
-                  hasApiKey={!!getApiKey('openai')}
+                  hasApiKey={hasAiKey}
                 />
               </div>
 
               {photos.length > 0 && (
                 <div className="flex gap-2 mt-4 overflow-x-auto">
                   {photos.map((p, i) => (
-                    <img key={i} src={p} alt={`Capture ${i + 1}`} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                    <img key={i} src={p} alt={`Capture ${i + 1}`} className="w-16 h-16 rounded-xl object-cover flex-shrink-0 border border-white/10" />
                   ))}
                 </div>
               )}
@@ -489,16 +482,20 @@ export default function Capture({ onSaveNote, settings }) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
-              <div className="w-16 h-16 rounded-full bg-red/10 flex items-center justify-center mx-auto mb-4">
-                <div className="w-8 h-8 rounded-full border-2 border-red border-t-transparent animate-spin" />
+              <div className="chrome-ring w-20 h-20 rounded-full bg-panel-2 flex items-center justify-center mx-auto mb-5"
+                style={{ boxShadow: '0 0 50px rgba(42,168,255,0.25)' }}>
+                <div className="w-9 h-9 rounded-full border-2 border-accent border-t-transparent animate-spin" />
               </div>
-              <p className="font-mono uppercase text-sm tracking-wider">{currentStep}</p>
-              <div className="mt-4 w-48 h-1 bg-white/30 rounded-full mx-auto overflow-hidden">
-                <div className="h-full bg-red rounded-full shimmer" style={{ width: '60%' }} />
+              <p className="font-mono font-semibold text-base">{currentStep || 'Working…'}</p>
+              <p className="text-xs text-muted mt-1">You can leave this screen. Your note opens when it is ready.</p>
+              {/* Indeterminate on purpose: the steps have no measurable
+                  percentage, so the bar sweeps rather than claiming one. */}
+              <div className="mt-5 w-56 h-1 bg-white/10 rounded-full mx-auto overflow-hidden">
+                <div className="h-full w-full rounded-full shimmer" />
               </div>
 
               {recordingState === 'processing' && segments.length > 0 && (
-                <div className="mt-5 flex justify-center">
+                <div className="mt-6 flex justify-center">
                   <SegmentProgress
                     segments={segments}
                     elapsedSeconds={elapsedSeconds}
@@ -511,26 +508,45 @@ export default function Capture({ onSaveNote, settings }) {
           )}
 
         </div>
+      ) : uploadProcessing ? (
+        <div className="w-full text-center py-12">
+          <div className="chrome-ring w-20 h-20 rounded-full bg-panel-2 flex items-center justify-center mx-auto mb-5"
+            style={{ boxShadow: '0 0 50px rgba(42,168,255,0.25)' }}>
+            <div className="w-9 h-9 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+          </div>
+          <p className="font-mono font-semibold text-base">{uploadStep || 'Working…'}</p>
+          <div className="mt-5 w-56 h-1 bg-white/10 rounded-full mx-auto overflow-hidden">
+            <div className="h-full w-full rounded-full shimmer" />
+          </div>
+        </div>
       ) : (
         /* UPLOAD MODE */
         <div
-          className="border-2 border-dashed border-red/30 rounded-2xl p-8 text-center cursor-pointer hover:border-red/50 transition-colors"
+          className="border border-dashed border-white/20 rounded-3xl p-10 text-center cursor-pointer hover:border-accent/60 hover:bg-accent/[0.04] transition-colors"
           onDrop={handleDrop}
           onDragOver={e => e.preventDefault()}
           onClick={() => document.getElementById('file-upload').click()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && document.getElementById('file-upload').click()}
         >
+          {/* v2.8 — PDFs are no longer offered: the app has no PDF reader, so
+              they used to be read as raw bytes and produced a garbage note. */}
           <input
             id="file-upload"
             type="file"
             className="hidden"
-            accept=".pdf,.jpg,.jpeg,.png,.mp3,.wav,.webm,.txt,.md"
+            accept=".jpg,.jpeg,.png,.webp,.mp3,.m4a,.mp4,.wav,.webm,.ogg,.aac,.txt,.md,audio/*,image/*,text/plain"
             onChange={e => handleFileUpload(e.target.files)}
           />
-          <svg width="40" height="40" viewBox="0 0 20 20" fill="none" stroke="#dc2626" strokeWidth="1" className="mx-auto mb-4 opacity-50">
-            <path d="M4 17h12M10 3v10m-4-4 4-4 4 4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <p className="font-mono uppercase text-sm text-muted tracking-wider mb-2">Drop files here</p>
-          <p className="text-xs text-muted">PDF, images, audio, or text files</p>
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 text-accent bg-accent/10 border border-accent/30"
+            style={{ boxShadow: '0 0 24px rgba(42,168,255,0.2)' }}>
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 16h12M10 3v9m-3.5-5.5L10 3l3.5 3.5"/>
+            </svg>
+          </div>
+          <p className="font-mono font-semibold text-base mb-1">Choose a file or drop it here</p>
+          <p className="text-sm text-muted">A recording, a photo of a whiteboard, or a text file</p>
         </div>
       )}
 

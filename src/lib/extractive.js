@@ -1,3 +1,20 @@
+// v2.7.2 — the local engine has no LLM to instruct, so filler removal here is
+// a direct regex scrub instead of a prompt rule. Only phrases that are safe
+// to delete unconditionally are covered — standalone "like" is left alone
+// since it's also a real verb/preposition and a false match would mangle a
+// sentence's grammar.
+const FILLER_PHRASES = /\b(um+|uh+|ah+|er+|you know|i mean|sort of|kind of|basically|actually)\b[,]?\s*/gi
+const TAG_QUESTION = /\s*,?\s*\bright\?/gi
+
+function stripDisfluencies(text) {
+  return text
+    .replace(FILLER_PHRASES, ' ')
+    .replace(TAG_QUESTION, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?])/g, '$1')
+    .trim()
+}
+
 export function extractSummary(text) {
   if (!text || text.length < 20) {
     return {
@@ -25,7 +42,12 @@ export function extractSummary(text) {
   // Score by word frequency (TF-based extractive summarization)
   const allWords = normalized.toLowerCase().split(/\s+/)
   const freq = {}
-  const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'shall', 'can', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'it', 'this', 'that', 'and', 'or', 'but', 'not', 'so', 'if', 'then', 'than', 'we', 'i', 'you', 'he', 'she', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'its', 'our', 'their', 'just', 'like', 'yeah', 'okay', 'right', 'well', 'think', 'know', 'going', 'want', 'really', 'actually', 'um', 'uh'])
+  // v2.7.2 — extended with the rest of the filler/disfluency set (ah, er,
+  // and the individual words of "I mean"/"sort of"/"kind of", since this
+  // scoring pass only ever sees single tokens) so fillers don't get scored
+  // as if they were meaningful, on top of the literal removal in
+  // stripDisfluencies() below.
+  const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'shall', 'can', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'it', 'this', 'that', 'and', 'or', 'but', 'not', 'so', 'if', 'then', 'than', 'we', 'i', 'you', 'he', 'she', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'its', 'our', 'their', 'just', 'like', 'yeah', 'okay', 'right', 'well', 'think', 'know', 'going', 'want', 'really', 'actually', 'basically', 'um', 'uh', 'ah', 'er', 'mean', 'sort', 'kind'])
 
   allWords.forEach(w => {
     const clean = w.replace(/[^a-z]/g, '')
@@ -42,7 +64,7 @@ export function extractSummary(text) {
 
   scored.sort((a, b) => b.score - a.score)
   const topSentences = scored.slice(0, Math.min(6, scored.length))
-  const bullets = topSentences.map(s => ensureCompleteSentence(s.text))
+  const bullets = topSentences.map(s => ensureCompleteSentence(stripDisfluencies(s.text)))
   const paragraph = bullets.slice(0, 3).join(' ')
 
   const actions = extractActions(text)
@@ -91,7 +113,7 @@ export function extractActions(text) {
   for (const pattern of patterns) {
     let match
     while ((match = pattern.exec(text)) !== null) {
-      let action = (match[2] || match[1]).trim()
+      let action = stripDisfluencies((match[2] || match[1]).trim())
       // Trim to last complete word if very long
       if (action.length > 100) {
         action = action.slice(0, 100).replace(/\s+\S*$/, '')
@@ -127,7 +149,7 @@ function extractDecisions(text) {
   for (const p of patterns) {
     let m
     while ((m = p.exec(text)) !== null) {
-      decisions.push(ensureCompleteSentence(m[1].trim()))
+      decisions.push(ensureCompleteSentence(stripDisfluencies(m[1].trim())))
     }
   }
   return decisions.slice(0, 5)
@@ -142,7 +164,7 @@ function extractFollowups(text) {
     let m
     while ((m = p.exec(text)) !== null) {
       if (m[1] && m[1].trim().length > 10) {
-        followups.push(ensureCompleteSentence(m[1].trim()))
+        followups.push(ensureCompleteSentence(stripDisfluencies(m[1].trim())))
       }
     }
   }

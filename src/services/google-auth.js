@@ -11,7 +11,7 @@
 // Still browser-only: the PKCE code_verifier replaces the client secret for
 // public clients. Some Google client types ("Web application") additionally
 // insist on a client secret at the token endpoint; if the exchange comes back
-// asking for one, the SYSTEM tab exposes an optional field for it. Nothing is
+// asking for one, Settings exposes an optional field for it. Nothing is
 // ever sent anywhere but accounts.google.com / oauth2.googleapis.com.
 import { getItem, setItem, removeItem } from '../lib/storage.js'
 
@@ -284,7 +284,7 @@ function waitForGis(timeoutMs = 10000) {
 export async function initGoogleAuth(clientId, codeChallenge) {
   const id = (clientId || getClientId() || '').trim()
   console.log(`${LOG} initGoogleAuth called, clientId present:`, !!id)
-  if (!id) throw new Error('No Google OAuth Client ID configured. Add one in the SYSTEM tab.')
+  if (!id) throw new Error('No Google OAuth Client ID configured. Add one in Settings.')
 
   const oauth2 = await waitForGis()
   const client = oauth2.initCodeClient({
@@ -335,7 +335,7 @@ function describeTokenError(status, data, text) {
     return {
       code,
       message: 'Google requires a client secret for this OAuth client. Paste it into the ' +
-        '"Client Secret" field in the SYSTEM tab (Cloud Console → Credentials → your OAuth ' +
+        '"Client Secret" field in Settings (Cloud Console → Credentials → your OAuth ' +
         `client → Client secret) and sign in again. [${raw}]`
     }
   }
@@ -343,7 +343,7 @@ function describeTokenError(status, data, text) {
     return {
       code,
       message: 'Google rejected the authorization code. Sign in again — if it keeps failing, ' +
-        'check that the Client ID in the SYSTEM tab belongs to the same Cloud project whose ' +
+        'check that the Client ID in Settings belongs to the same Cloud project whose ' +
         `consent screen you approved. [${raw}]`
     }
   }
@@ -455,7 +455,7 @@ export async function signIn() {
 
   pendingSignIn = (async () => {
     const clientId = getClientId()
-    if (!clientId) throw new Error('No Google OAuth Client ID configured. Add one in the SYSTEM tab.')
+    if (!clientId) throw new Error('No Google OAuth Client ID configured. Add one in Settings.')
 
     let verifier = ''
     let challenge = ''

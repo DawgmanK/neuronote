@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import GlassCard from './ui/GlassCard'
-import { detectActionItems } from '../lib/openai'
+import { detectActionItems } from '../lib/ai-provider'
 
 export default function LiveActionItems({ transcript, isRecording, enabled, hasApiKey }) {
   const [actionItems, setActionItems] = useState([])
@@ -51,28 +51,28 @@ export default function LiveActionItems({ transcript, isRecording, enabled, hasA
   return (
     <GlassCard className="h-full" hoverable={false} animate={false}>
       <div className="flex items-center gap-2 mb-3">
-        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M10 2v6l4 2" /><circle cx="10" cy="10" r="8" />
         </svg>
-        <h3 className="font-mono uppercase text-xs font-bold tracking-wider">Live Action Items</h3>
+        <h3 className="section-label">Action items caught</h3>
         {isAnalyzing && (
-          <span className="w-2 h-2 bg-red rounded-full dot-pulse-fast" />
+          <span className="w-2 h-2 bg-accent rounded-full dot-pulse-fast" />
         )}
       </div>
 
       {!enabled && (
-        <p className="text-xs text-muted">Enable in System settings</p>
+        <p className="text-xs text-muted">Turn this on in Settings</p>
       )}
       {enabled && !hasApiKey && (
-        <p className="text-xs text-muted">Requires OpenAI API key</p>
+        <p className="text-xs text-muted">Needs an AI key — add one in Settings</p>
       )}
       {enabled && hasApiKey && !isRecording && (
-        <p className="text-xs text-muted">Action items will appear during recording...</p>
+        <p className="text-xs text-muted">They show up here while you record.</p>
       )}
 
       {enabled && hasApiKey && isRecording && actionItems.length === 0 && (
         <p className="text-xs text-muted">
-          {isAnalyzing ? 'Analyzing...' : 'Action items will appear here as they\'re detected...'}
+          {isAnalyzing ? 'Listening for commitments…' : 'Action items will appear here as they\'re detected...'}
         </p>
       )}
 
@@ -83,19 +83,19 @@ export default function LiveActionItems({ transcript, isRecording, enabled, hasA
               key={item.id}
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              className="flex items-start gap-2 p-2 rounded-lg bg-white/30"
+              className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.06]"
             >
-              <div className="mt-0.5 w-4 h-4 rounded border border-red/30 flex-shrink-0" />
+              <div className="mt-0.5 w-4 h-4 rounded border border-accent/30 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-xs leading-relaxed">{item.action}</p>
                 <div className="flex gap-2 mt-1">
                   {item.owner && (
-                    <span className="text-[10px] bg-red/10 text-red-dark px-1.5 py-0.5 rounded-full">
+                    <span className="text-[11px] bg-accent/10 text-accent px-1.5 py-0.5 rounded-full">
                       {item.owner}
                     </span>
                   )}
                   {item.due && (
-                    <span className="text-[10px] text-muted">{item.due}</span>
+                    <span className="text-[11px] text-muted">{item.due}</span>
                   )}
                 </div>
               </div>

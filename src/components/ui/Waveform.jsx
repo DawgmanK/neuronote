@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from 'react'
 
-export default function Waveform({ stream, isRecording, color = '#dc2626' }) {
+export default function Waveform({ stream, isRecording, color = '#2aa8ff' }) {
   const canvasRef = useRef(null)
   const animRef = useRef(null)
   const analyserRef = useRef(null)
@@ -32,7 +32,7 @@ export default function Waveform({ stream, isRecording, color = '#dc2626' }) {
 
         ctx.beginPath()
         ctx.roundRect(x, y, barWidth, barHeight, 2)
-        ctx.fillStyle = `rgba(220, 38, 38, ${0.3 + value * 0.7})`
+        ctx.fillStyle = `rgba(42, 168, 255, ${0.35 + value * 0.65})`
         ctx.fill()
       }
     } else {
@@ -46,7 +46,7 @@ export default function Waveform({ stream, isRecording, color = '#dc2626' }) {
         const y = (h - barHeight) / 2
         ctx.beginPath()
         ctx.roundRect(x, y, barWidth, barHeight, 2)
-        ctx.fillStyle = `rgba(220, 38, 38, 0.2)`
+        ctx.fillStyle = `rgba(255, 255, 255, 0.14)`
         ctx.fill()
       }
     }

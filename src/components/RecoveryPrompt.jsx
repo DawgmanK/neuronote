@@ -39,13 +39,13 @@ export default function RecoveryPrompt() {
       {recovery && (
         <motion.div
           className="fixed inset-0 z-[65] flex items-center justify-center px-6"
-          style={{ background: 'rgba(30, 25, 20, 0.35)', backdropFilter: 'blur(4px)' }}
+          style={{ background: 'rgba(0, 0, 0, 0.72)', backdropFilter: 'blur(4px)' }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
           <motion.div
-            className="glass w-full max-w-sm p-5"
+            className="sheet rounded-2xl w-full max-w-sm p-5"
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -55,8 +55,8 @@ export default function RecoveryPrompt() {
             aria-label="Unsaved recording found"
           >
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#dc2626' }} />
-              <h3 className="font-mono uppercase text-xs font-bold tracking-wider">Unsaved Recording Found</h3>
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#ff2d55', boxShadow: '0 0 10px #ff2d55' }} />
+              <h3 className="font-mono font-semibold text-base text-ink">Unsaved recording found</h3>
             </div>
             <p className="text-sm leading-snug mb-1">
               You have an unsaved recording from {minutesAgo(recovery.startTime)} ({lengthLabel(lengthSeconds)}). Recover it?
@@ -68,20 +68,20 @@ export default function RecoveryPrompt() {
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => recoverRecording()}
-                className="tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono uppercase text-xs tracking-wider text-white"
-                style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
+                className="tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-medium text-white"
+                style={{ background: 'var(--grad-accent)' }}
               >
                 Recover
               </button>
               <button
                 onClick={() => dismissRecovery()}
-                className="tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono uppercase text-xs tracking-wider text-muted border border-black/10 bg-white/40 hover:text-ink"
+                className="tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-medium btn-ghost"
               >
                 Later
               </button>
               <button
                 onClick={() => discardRecovery()}
-                className="tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono uppercase text-xs tracking-wider text-red border border-red/30 bg-white/40"
+                className="tap-target w-full flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-medium text-rec border border-rec/40 bg-rec/10"
               >
                 Discard
               </button>

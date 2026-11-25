@@ -103,7 +103,7 @@ export default function CorrectionPopup({ wrong = '', anchor = null, manual = fa
         onClick={e => e.stopPropagation()}
         onContextMenu={e => e.preventDefault()}
       >
-        <p className="font-mono uppercase text-[10px] font-bold tracking-wider text-muted mb-2">Change:</p>
+        <p className="section-label mb-2">Change</p>
 
         {manual ? (
           <input
@@ -145,15 +145,15 @@ export default function CorrectionPopup({ wrong = '', anchor = null, manual = fa
           {/* v2.2.1 — both at least 44x44 so they are thumb-sized on mobile. */}
           <motion.button
             onClick={save}
-            className="tap-target flex-1 flex items-center justify-center py-2 rounded-xl text-white font-mono uppercase text-[10px] tracking-wider"
-            style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
+            className="tap-target flex-1 flex items-center justify-center py-2 rounded-xl text-white font-mono text-xs font-medium"
+            style={{ background: 'var(--grad-accent)' }}
             whileTap={{ scale: 0.95 }}
           >
             Save
           </motion.button>
           <motion.button
             onClick={cancel}
-            className="tap-target flex-1 flex items-center justify-center py-2 rounded-xl border border-red/30 text-red font-mono uppercase text-[10px] tracking-wider"
+            className="tap-target flex-1 flex items-center justify-center py-2 rounded-xl border border-accent/30 text-accent font-mono text-xs font-medium"
             whileTap={{ scale: 0.95 }}
           >
             Cancel

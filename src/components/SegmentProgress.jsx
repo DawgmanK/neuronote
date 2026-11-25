@@ -11,11 +11,11 @@ const ICONS = {
 }
 
 const TONE = {
-  [SEGMENT_STATUS.PENDING]: { color: '#8a8178', border: 'rgba(0,0,0,0.08)' },
-  [SEGMENT_STATUS.UPLOADING]: { color: '#991b1b', border: 'rgba(220,38,38,0.30)' },
-  [SEGMENT_STATUS.TRANSCRIBING]: { color: '#991b1b', border: 'rgba(220,38,38,0.30)' },
-  [SEGMENT_STATUS.COMPLETE]: { color: '#16a34a', border: 'rgba(22,163,74,0.35)' },
-  [SEGMENT_STATUS.FAILED]: { color: '#dc2626', border: 'rgba(220,38,38,0.45)' }
+  [SEGMENT_STATUS.PENDING]: { color: '#8b919c', border: 'rgba(255,255,255,0.12)' },
+  [SEGMENT_STATUS.UPLOADING]: { color: '#7cc8ff', border: 'rgba(42,168,255,0.35)' },
+  [SEGMENT_STATUS.TRANSCRIBING]: { color: '#7cc8ff', border: 'rgba(42,168,255,0.35)' },
+  [SEGMENT_STATUS.COMPLETE]: { color: '#2dff9a', border: 'rgba(45,255,154,0.35)' },
+  [SEGMENT_STATUS.FAILED]: { color: '#ff7d96', border: 'rgba(255,45,85,0.45)' }
 }
 
 function rangeLabel(segment) {
@@ -50,7 +50,7 @@ export default function SegmentProgress({ segments, elapsedSeconds, isRecording,
                 key={segment.segmentId}
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/50 backdrop-blur font-mono text-[10px] tracking-wider whitespace-nowrap flex-shrink-0"
+                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.06] backdrop-blur font-mono text-[11px] tracking-wider whitespace-nowrap flex-shrink-0"
                 style={{ color: tone.color, border: `1px solid ${tone.border}` }}
                 title={segment.error ? `Segment ${segment.index}: ${segment.error}` : `Segment ${segment.index}: ${segment.status}`}
               >
@@ -65,10 +65,10 @@ export default function SegmentProgress({ segments, elapsedSeconds, isRecording,
 
         {isRecording && (
           <span
-            className="flex items-center gap-1 px-2 py-1 rounded-lg font-mono text-[10px] tracking-wider whitespace-nowrap flex-shrink-0"
-            style={{ color: '#dc2626', border: '1px solid rgba(220,38,38,0.45)', background: 'rgba(220,38,38,0.08)' }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg font-mono text-[11px] tracking-wider whitespace-nowrap flex-shrink-0"
+            style={{ color: '#ff7d96', border: '1px solid rgba(255,45,85,0.45)', background: 'rgba(255,45,85,0.1)' }}
           >
-            <span className="w-1.5 h-1.5 rounded-full dot-pulse-fast" style={{ background: '#dc2626' }} />
+            <span className="w-1.5 h-1.5 rounded-full dot-pulse-fast" style={{ background: '#ff2d55', boxShadow: '0 0 10px #ff2d55' }} />
             recording {formatDuration(elapsedSeconds)}
           </span>
         )}

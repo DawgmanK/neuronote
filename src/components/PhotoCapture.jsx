@@ -72,7 +72,7 @@ export default function PhotoCapture({ onCapture, onClose }) {
 
       <button
         onClick={onClose}
-        aria-label="Close camera" className="absolute right-4 w-11 h-11 rounded-full bg-black/50 text-white flex items-center justify-center text-lg"
+        aria-label="Close camera" className="absolute right-4 w-11 h-11 rounded-full bg-black/75 text-white flex items-center justify-center text-lg"
         style={{ top: 'max(16px, env(safe-area-inset-top))' }}
       >
         ×
@@ -82,10 +82,10 @@ export default function PhotoCapture({ onCapture, onClose }) {
         style={{ bottom: 'max(32px, env(safe-area-inset-bottom))' }}>
         <motion.button
           onClick={capture}
-          className="w-16 h-16 rounded-full border-4 border-white bg-white/20 backdrop-blur"
+          className="w-16 h-16 rounded-full border-4 border-white bg-white/[0.06] backdrop-blur"
           whileTap={{ scale: 0.9 }}
         >
-          <div className="w-full h-full rounded-full bg-white/80" />
+          <div className="w-full h-full rounded-full bg-white/90" />
         </motion.button>
       </div>
     </motion.div>

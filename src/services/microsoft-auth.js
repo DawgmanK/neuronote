@@ -9,7 +9,7 @@
 //
 // Browser-only, no client secret and no backend: the user registers a
 // single-page-application app in Entra ID (Azure AD) and pastes the Application
-// (client) ID into the SYSTEM tab. Unlike Google's implicit token flow, MSAL
+// (client) ID into Settings. Unlike Google's implicit token flow, MSAL
 // caches a refresh token and renews access tokens silently, so the connection
 // survives well past the one-hour access-token lifetime.
 import { getItem, setItem, removeItem } from '../lib/storage.js'
@@ -26,7 +26,7 @@ const RETURN_TAB_KEY = 'microsoft:return-tab'
 export const DEFAULT_TENANT_ID = 'common'
 
 // Calendars/Tasks are needed to write; User.Read resolves the address shown in
-// the SYSTEM tab; offline_access is what buys the silent refresh.
+// Settings; offline_access is what buys the silent refresh.
 export const MICROSOFT_SCOPES = [
   'Calendars.ReadWrite',
   'Tasks.ReadWrite',
@@ -158,7 +158,7 @@ export async function initMicrosoftAuth(clientId, tenantId) {
   const id = (clientId || getClientId() || '').trim()
   const tenant = (tenantId || getTenantId() || DEFAULT_TENANT_ID).trim() || DEFAULT_TENANT_ID
   console.log('[NeuroNote:MSAuth] initMicrosoftAuth called, clientId present:', !!id, 'tenant:', tenant)
-  if (!id) throw new Error('No Microsoft Client ID configured. Add one in the SYSTEM tab.')
+  if (!id) throw new Error('No Microsoft Client ID configured. Add one in Settings.')
 
   const key = `${id}|${tenant}`
   if (msalInstance && msalKey === key) {

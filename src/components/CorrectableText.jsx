@@ -63,7 +63,7 @@ export default function CorrectableText({ text, onCorrection, className = '', as
     tabIndex: 0,
     'aria-label': `Correct the word ${word}`,
     className: `rounded cursor-text transition-colors ${
-      active?.key === key ? 'bg-red/15' : 'hover:bg-red/5'
+      active?.key === key ? 'bg-accent/15' : 'hover:bg-accent/5'
     }`,
     onContextMenu: (e) => {
       e.preventDefault()

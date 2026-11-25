@@ -12,9 +12,27 @@ import { addedLabel } from '../services/action-sync'
 import { normalizeActionItem } from '../lib/actionItems'
 import { replacePreservingCase } from '../lib/corrections'
 
-const subTabs = ['summary', 'transcript', 'original', 'flashcards']
+const subTabs = [
+  { id: 'summary', label: 'Summary' },
+  { id: 'transcript', label: 'Transcript' },
+  { id: 'flashcards', label: 'Study' },
+  { id: 'original', label: 'Unedited' }
+]
 
-export default function Session({ note, onUpdateNote }) {
+/** "2026-11-27" + "09:00" -> "Fri, Nov 27 · 9:00 AM". Falls back to the raw text. */
+function formatDue(dueDate, dueTime) {
+  if (!dueDate) return ''
+  const date = new Date(`${dueDate}T${dueTime || '00:00'}`)
+  if (Number.isNaN(date.getTime())) return `${dueDate}${dueTime ? ` ${dueTime}` : ''}`
+  const sameYear = date.getFullYear() === new Date().getFullYear()
+  const day = date.toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' })
+  })
+  if (!dueTime) return day
+  return `${day} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+}
+
+export default function Session({ note, onUpdateNote, onOpenSettings }) {
   const [activeSubTab, setActiveSubTab] = useState('summary')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
@@ -36,8 +54,8 @@ export default function Session({ note, onUpdateNote }) {
         <svg width="48" height="48" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1" className="mb-4 opacity-30">
           <path d="M2 10h2l2-4 2 8 2-6 2 4 2-2 2 3h2" strokeLinecap="round"/>
         </svg>
-        <p className="font-mono uppercase text-sm tracking-wider">No active session</p>
-        <p className="text-xs mt-1">Record or select a note from Archive</p>
+        <p className="font-mono text-sm font-medium">No meeting selected</p>
+        <p className="text-xs mt-1">Pick one from Home</p>
       </div>
     )
   }
@@ -73,7 +91,9 @@ export default function Session({ note, onUpdateNote }) {
   }
 
   const copyTranscript = () => {
-    navigator.clipboard.writeText(note.transcript || '').catch(() => {})
+    navigator.clipboard.writeText(note.transcript || '')
+      .then(() => toast.show({ message: 'Transcript copied.', type: 'success', duration: 2500 }))
+      .catch(() => toast.show({ message: 'Could not copy the transcript.', type: 'error' }))
   }
 
   // --- v2.2 tap-to-correct ------------------------------------------------
@@ -144,7 +164,7 @@ export default function Session({ note, onUpdateNote }) {
   }
 
   // --- Calendar & Tasks integration (v2.5) --------------------------------
-  // Google, Microsoft, both, or none - the user picks in the SYSTEM tab.
+  // Google, Microsoft, both, or none - the user picks in Settings.
   const integrationOff = provider === 'none'
   const actionItems = (note.summary?.actions || []).map(normalizeActionItem)
   const pendingCount = actionItems.filter(a => !a.sync).length
@@ -176,8 +196,8 @@ export default function Session({ note, onUpdateNote }) {
     if (candidates.length === 0) {
       toast.show({
         message: showGoogle
-          ? 'Add your Google OAuth Client ID in the SYSTEM tab first.'
-          : 'Add your Azure Client ID in the SYSTEM tab first.',
+          ? 'Add your Google OAuth Client ID in Settings first.'
+          : 'Add your Azure Client ID in Settings first.',
         type: 'error',
         duration: 8000
       })
@@ -219,40 +239,48 @@ export default function Session({ note, onUpdateNote }) {
             onChange={e => setTitleValue(e.target.value)}
             onBlur={handleTitleSave}
             onKeyDown={e => e.key === 'Enter' && handleTitleSave()}
-            className="font-mono uppercase text-lg font-bold tracking-wider bg-transparent border-b-2 border-red outline-none w-full"
+            aria-label="Meeting title"
+            className="font-mono text-2xl font-bold tracking-tight bg-transparent border-b-2 border-accent outline-none w-full text-ink"
           />
         ) : (
-          <h1
-            className="font-mono uppercase text-lg font-bold tracking-wider typewriter-shadow cursor-pointer hover:text-red transition-colors"
+          <button
+            className="group flex items-start gap-2 text-left"
             onClick={() => { setEditingTitle(true); setTitleValue(note.title || '') }}
+            aria-label={`Rename ${note.title || 'Untitled'}`}
           >
-            {note.title || 'Untitled'}
-          </h1>
+            <h1 className="chrome-text font-mono text-2xl font-bold tracking-tight leading-tight">
+              {note.title || 'Untitled'}
+            </h1>
+            <svg className="text-muted group-hover:text-accent transition-colors mt-1.5 flex-shrink-0" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13.5 3.5l3 3L7 16H4v-3z"/>
+            </svg>
+          </button>
         )}
-        <p className="text-xs text-muted mt-1">
+        <p className="text-sm text-muted mt-1.5">
           {formatDate(note.date)}
-          {note.duration > 0 && ` • ${Math.floor(note.duration / 60)}:${(note.duration % 60).toString().padStart(2, '0')}`}
-          {note.speakers > 1 && ` • ${note.speakers} speakers`}
+          {note.duration > 0 && ` · ${Math.max(1, Math.round(note.duration / 60))} min`}
+          {note.speakers > 1 && ` · ${note.speakers} speakers`}
         </p>
       </div>
 
       {/* Sub-tabs */}
-      <div className="flex gap-1 p-1 rounded-full bg-white/40 backdrop-blur mb-4 overflow-x-auto">
+      <div className="flex gap-1 p-1 rounded-full bg-white/[0.05] border border-white/10 mb-4 overflow-x-auto overflow-y-hidden no-scrollbar" role="tablist">
         {/* v2.2.1 — the pill keeps its size; the button around it grows to 44px
             tall and the negative margin keeps the bar the same height. */}
         {subTabs.map(tab => (
           <button
-            key={tab}
-            onClick={() => setActiveSubTab(tab)}
-            className="tap-target -my-2 flex items-center"
+            key={tab.id}
+            role="tab"
+            aria-selected={activeSubTab === tab.id}
+            onClick={() => setActiveSubTab(tab.id)}
+            className="tap-target -my-2 flex flex-1 items-center justify-center"
           >
             <span
-              className={`block px-4 py-1.5 rounded-full font-mono uppercase text-[10px] tracking-wider whitespace-nowrap transition-all ${
-                activeSubTab === tab ? 'text-white' : 'text-muted hover:text-ink'
+              className={`block w-full text-center px-3 py-1.5 rounded-full font-mono text-[13px] font-medium whitespace-nowrap transition-all ${
+                activeSubTab === tab.id ? 'bg-white/[0.12] text-ink chrome-ring' : 'text-muted hover:text-ink'
               }`}
-              style={activeSubTab === tab ? { background: 'linear-gradient(to right, #dc2626, #991b1b)' } : undefined}
             >
-              {tab}
+              {tab.label}
             </span>
           </button>
         ))}
@@ -284,11 +312,11 @@ export default function Session({ note, onUpdateNote }) {
 
               {note.summary?.bullets?.length > 0 && (
                 <GlassCard hoverable={false}>
-                  <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-3">Key Points</h3>
+                  <h3 className="section-label mb-3">Key points</h3>
                   <ul className="space-y-2">
                     {note.summary.bullets.map((b, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red mt-1.5 flex-shrink-0" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-accent mt-1.5 flex-shrink-0" />
                         <CorrectableText className="leading-relaxed" text={b} onCorrection={handleCorrection} />
                       </li>
                     ))}
@@ -299,7 +327,7 @@ export default function Session({ note, onUpdateNote }) {
               {actionItems.length > 0 && (
                 <GlassCard hoverable={false}>
                   <div className="flex items-center justify-between gap-2 mb-3">
-                    <h3 className="font-mono uppercase text-xs font-bold tracking-wider">Action Items</h3>
+                    <h3 className="section-label">Action items</h3>
                     {pendingCount > 0 && !integrationOff && (
                       <motion.button
                         onClick={openReviewAll}
@@ -307,10 +335,10 @@ export default function Session({ note, onUpdateNote }) {
                         whileTap={{ scale: 0.95 }}
                       >
                         <span
-                          className="block px-3 py-1.5 rounded-full text-white font-mono uppercase text-[9px] tracking-wider whitespace-nowrap"
-                          style={{ background: 'linear-gradient(to right, #dc2626, #991b1b)' }}
+                          className="block px-3 py-1.5 rounded-full text-white font-mono text-xs font-medium whitespace-nowrap"
+                          style={{ background: 'var(--grad-accent)' }}
                         >
-                          Review &amp; Add All
+                          Send all to calendar
                         </span>
                       </motion.button>
                     )}
@@ -324,24 +352,25 @@ export default function Session({ note, onUpdateNote }) {
                           className="tap-target -m-3.5 flex-shrink-0 flex items-center justify-center"
                         >
                           <span
-                            className={`w-4 h-4 mt-0.5 rounded border flex items-center justify-center transition-colors ${
-                              a.done ? 'bg-red border-red text-white' : 'border-red/30'
+                            className={`w-[18px] h-[18px] mt-0.5 rounded-md border flex items-center justify-center transition-colors ${
+                              a.done ? 'bg-ok border-ok text-black' : 'border-white/30'
                             }`}
+                            style={a.done ? { boxShadow: '0 0 10px rgba(45,255,154,0.45)' } : undefined}
                           >
-                            {a.done && <svg width="10" height="10" viewBox="0 0 20 20" fill="currentColor"><path d="M5 10l3 3 7-7"/></svg>}
+                            {a.done && <svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>}
                           </span>
                         </button>
                         <div className="flex-1 min-w-0">
                           <span className={`leading-relaxed ${a.done ? 'line-through text-muted' : ''}`}>
                             <CorrectableText text={a.text} onCorrection={handleCorrection} />
                             {a.owner && a.owner !== 'Unknown' && (
-                              <span className="text-[10px] bg-red/10 text-red-dark px-1.5 py-0.5 rounded-full ml-2">
+                              <span className="text-[11px] bg-accent/10 text-accent px-1.5 py-0.5 rounded-full ml-2">
                                 <CorrectableText text={a.owner} onCorrection={handleCorrection} />
                               </span>
                             )}
                             {a.dueDate && (
-                              <span className="text-[10px] text-muted font-mono ml-2 whitespace-nowrap">
-                                {a.dueDate}{a.dueTime ? ` ${a.dueTime}` : ''}
+                              <span className="text-[11px] text-muted font-mono ml-2 whitespace-nowrap">
+                                {formatDue(a.dueDate, a.dueTime)}
                               </span>
                             )}
                           </span>
@@ -354,7 +383,7 @@ export default function Session({ note, onUpdateNote }) {
                                 rel="noopener noreferrer"
                                 className="tap-target -my-3 inline-flex items-center"
                               >
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-500/10 border border-green-500/30 font-mono uppercase text-[9px] tracking-wider text-green-700 hover:bg-green-500/20 transition-colors">
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-ok/10 border border-ok/30 font-mono text-xs font-medium text-ok hover:bg-ok/20 transition-colors">
                                   ✓ Added to {addedLabel(a.sync.provider, a.sync.type)} ↗
                                 </span>
                               </a>
@@ -368,8 +397,8 @@ export default function Session({ note, onUpdateNote }) {
                                 className="tap-target -my-3 flex items-center"
                                 whileTap={{ scale: 0.95 }}
                               >
-                                <span className="block px-2.5 py-1 rounded-full border border-red/30 bg-white/40 font-mono uppercase text-[9px] tracking-wider text-red hover:bg-red/10 transition-colors">
-                                  📅 Event
+                                <span className="block px-2.5 py-1 rounded-full border border-accent/30 bg-white/[0.06] font-mono text-xs font-medium text-accent hover:bg-accent/10 transition-colors">
+                                  + Calendar
                                 </span>
                               </motion.button>
                               <motion.button
@@ -377,8 +406,8 @@ export default function Session({ note, onUpdateNote }) {
                                 className="tap-target -my-3 flex items-center"
                                 whileTap={{ scale: 0.95 }}
                               >
-                                <span className="block px-2.5 py-1 rounded-full border border-red/30 bg-white/40 font-mono uppercase text-[9px] tracking-wider text-red hover:bg-red/10 transition-colors">
-                                  ✓ Task
+                                <span className="block px-2.5 py-1 rounded-full border border-accent/30 bg-white/[0.06] font-mono text-xs font-medium text-accent hover:bg-accent/10 transition-colors">
+                                  + Task list
                                 </span>
                               </motion.button>
                             </div>
@@ -387,12 +416,24 @@ export default function Session({ note, onUpdateNote }) {
                       </li>
                     ))}
                   </ul>
+                  {/* v2.8 — with no calendar connected the send buttons used
+                      to vanish without a word. Say why, and where to fix it. */}
+                  {integrationOff && (
+                    <button
+                      onClick={onOpenSettings}
+                      disabled={!onOpenSettings}
+                      className="mt-4 pt-3 border-t border-white/10 w-full text-left text-xs text-muted hover:text-ink transition-colors"
+                    >
+                      Want these on your calendar or task list?{' '}
+                      <span className="text-accent">Connect Google or Microsoft in Settings →</span>
+                    </button>
+                  )}
                 </GlassCard>
               )}
 
               {note.decisions?.length > 0 && (
                 <GlassCard hoverable={false}>
-                  <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-3">Decisions</h3>
+                  <h3 className="section-label mb-3">Decisions</h3>
                   <ol className="space-y-2 list-decimal list-inside">
                     {note.decisions.map((d, i) => (
                       <li key={i} className="text-sm leading-relaxed">
@@ -405,11 +446,11 @@ export default function Session({ note, onUpdateNote }) {
 
               {note.followups?.length > 0 && (
                 <GlassCard hoverable={false}>
-                  <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-3">Follow-ups</h3>
+                  <h3 className="section-label mb-3">Follow-ups</h3>
                   <ul className="space-y-2">
                     {note.followups.map((f, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm">
-                        <span className="text-red">→</span>
+                        <span className="text-accent">→</span>
                         <CorrectableText className="leading-relaxed" text={f} onCorrection={handleCorrection} />
                       </li>
                     ))}
@@ -422,8 +463,8 @@ export default function Session({ note, onUpdateNote }) {
           {activeSubTab === 'transcript' && (
             <GlassCard hoverable={false}>
               <div className="flex justify-between items-center mb-3">
-                <h3 className="font-mono uppercase text-xs font-bold tracking-wider">Transcript</h3>
-                <button onClick={copyTranscript} className="tap-target -my-3 -mr-3 px-3 inline-flex items-center justify-center text-xs text-muted hover:text-red font-mono uppercase tracking-wider">
+                <h3 className="section-label">Transcript</h3>
+                <button onClick={copyTranscript} className="tap-target -my-3 -mr-3 px-3 inline-flex items-center justify-center text-xs font-medium text-accent hover:brightness-125 font-mono">
                   Copy
                 </button>
               </div>
@@ -443,13 +484,13 @@ export default function Session({ note, onUpdateNote }) {
                               onChange={e => setSpeakerName(e.target.value)}
                               onBlur={() => handleSpeakerRename(speaker)}
                               onKeyDown={e => e.key === 'Enter' && handleSpeakerRename(speaker)}
-                              className="font-mono font-bold text-red bg-red/5 border-b border-red outline-none w-24 text-sm"
+                              className="font-mono font-bold text-accent bg-accent/5 border-b border-accent outline-none w-24 text-sm"
                             />
                             <span>:</span>
                           </span>
                         ) : (
                           <span
-                            className="font-mono font-bold text-red cursor-pointer hover:bg-red/5 rounded px-1 -mx-1"
+                            className="font-mono font-bold text-accent cursor-pointer hover:bg-accent/5 rounded px-1 -mx-1"
                             onClick={() => { setEditingSpeaker(speaker); setSpeakerName(speaker) }}
                           >
                             <CorrectableText text={speaker} onCorrection={handleCorrection} />:
@@ -472,7 +513,8 @@ export default function Session({ note, onUpdateNote }) {
 
           {activeSubTab === 'original' && (
             <GlassCard hoverable={false}>
-              <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-3">Original Content</h3>
+              <h3 className="section-label mb-1">Unedited text</h3>
+              <p className="text-xs text-muted mb-3">Exactly as it was transcribed, before any corrections.</p>
               <pre className="text-sm leading-relaxed whitespace-pre-wrap font-mono text-muted max-h-[60vh] overflow-y-auto">
                 {note.originalTranscript || note.transcript || 'No original content available.'}
               </pre>
@@ -488,14 +530,14 @@ export default function Session({ note, onUpdateNote }) {
       {/* Photo gallery */}
       {note.photos?.length > 0 && (
         <div className="mt-6">
-          <h3 className="font-mono uppercase text-xs font-bold tracking-wider mb-2">Photos</h3>
+          <h3 className="section-label mb-2">Photos</h3>
           <div className="flex gap-2 overflow-x-auto pb-2">
             {note.photos.map((photo, i) => (
               <img
                 key={i}
                 src={photo}
                 alt={`Capture ${i + 1}`}
-                className="w-24 h-24 rounded-xl object-cover flex-shrink-0 cursor-pointer hover:ring-2 ring-red transition-all"
+                className="w-24 h-24 rounded-xl object-cover flex-shrink-0 cursor-pointer hover:ring-2 ring-accent transition-all"
                 onClick={() => setViewingPhoto(photo)}
               />
             ))}
@@ -516,7 +558,7 @@ export default function Session({ note, onUpdateNote }) {
             <img src={viewingPhoto} alt="Full view" className="max-w-full max-h-full object-contain rounded-xl" />
             <button
               aria-label="Close photo"
-              className="absolute right-4 w-11 h-11 rounded-full bg-white/20 text-white flex items-center justify-center text-lg"
+              className="absolute right-4 w-11 h-11 rounded-full bg-white/[0.06] text-white flex items-center justify-center text-lg"
               style={{ top: 'max(1rem, env(safe-area-inset-top))' }}
             >
               ×

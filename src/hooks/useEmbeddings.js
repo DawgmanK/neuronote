@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { getEmbeddings, saveEmbeddings } from '../lib/storage'
-import { generateEmbedding } from '../lib/openai'
+import { generateEmbedding } from '../lib/ai-provider'
 import { indexNote, searchNotes } from '../lib/vectorSearch'
 
 export default function useEmbeddings() {
