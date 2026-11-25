@@ -434,7 +434,7 @@ function AppFrame({
       {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-30 glass-nav">
         <div className="flex items-center justify-between px-4 pb-2 max-w-4xl mx-auto"
-          style={{ paddingTop: 'max(10px, env(safe-area-inset-top))' }}>
+          style={{ paddingTop: 'max(10px, var(--safe-top))' }}>
           <div className="flex items-center gap-2.5">
             <LogoMark size={32} />
             <span className="chrome-text font-mono font-bold text-[17px] tracking-tight leading-none">NeuroNote</span>
@@ -446,8 +446,10 @@ function AppFrame({
       {/* v2.3 — recording follows the user across every tab. */}
       <RecordingBanner />
 
-      {/* Content */}
-      <main className="pt-[72px] pb-32 max-w-4xl mx-auto">
+      {/* Content — starts below the header however tall the notch makes it.
+          A fixed 72px here left the top of every tab under the header on
+          iPhones (the Record tab's mode switch was the visible casualty). */}
+      <main className="pb-32 max-w-4xl mx-auto" style={{ paddingTop: 'calc(var(--header-h) + 22px)' }}>
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}

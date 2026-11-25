@@ -13,7 +13,7 @@ export default defineConfig({
       manifest: {
         name: 'NeuroNote Meeting OS',
         short_name: 'NeuroNote',
-        version: '2.9.0',
+        version: '2.9.1',
         description: 'AI-powered meeting notes with discreet screensaver recording, background-safe recording, chunked live transcription, speaker diarization, live action items, tap-to-correct learning dictionary, persistent Google and Microsoft sign-in, Google Calendar + Tasks or Outlook Calendar + Microsoft To Do sync, and a choice of OpenAI or Google Gemini as the AI provider',
         start_url: '/',
         display: 'standalone',

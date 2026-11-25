@@ -41,6 +41,12 @@
   --glow-accent: 0 0 0 1px rgba(42, 168, 255, 0.35), 0 0 24px rgba(42, 168, 255, 0.28);
   --glow-rec: 0 0 0 1px rgba(255, 45, 85, 0.45), 0 0 32px rgba(255, 45, 85, 0.4);
   --glow-ok: 0 0 0 1px rgba(45, 255, 154, 0.35), 0 0 20px rgba(45, 255, 154, 0.22);
+
+  /* The fixed header grows with the phone's status bar / notch, so anything
+     placed below it has to be measured from the same number. --header-h is the
+     header's real height: its top padding, the 32px logo row, 8px below. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --header-h: calc(max(10px, var(--safe-top)) + 40px);
 }
 
 * {

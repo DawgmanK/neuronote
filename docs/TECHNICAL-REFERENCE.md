@@ -1,6 +1,6 @@
 # NeuroNote — Technical Reference
 
-Implementation notes for NeuroNote Meeting OS v2.9.0: how each subsystem works, every storage key it
+Implementation notes for NeuroNote Meeting OS v2.9.1: how each subsystem works, every storage key it
 writes, and the reasoning behind the trickier decisions. For installation and day-to-day use, start at the
 [project README](../README.md).
 
@@ -336,6 +336,7 @@ Replacement is whole-word and case-preserving: `smyth → smith`, `Smyth → Smi
 Every control in the mobile UI is at least 44x44px — Apple's HIG minimum — and the session header and bottom nav respect the iOS safe areas.
 
 - The session detail **Back** arrow is a 48x48 target and sits below the status bar / dynamic island (`padding-top: max(1rem, env(safe-area-inset-top))` on the overlay header).
+- The main header's height follows the status bar / notch, and so does everything measured from it: `--safe-top` and `--header-h` in `src/index.css` are the single source, used by the header, the page content's top padding (`--header-h` + 22px) and the recording banner. Before this, content started at a fixed 72px and the top of each tab (the Record tab's Meeting / Sales call / Upload switch) sat under the header on iPhones.
 - The bottom nav pads itself with `env(safe-area-inset-bottom)` so the tabs clear the home-indicator gesture area; the bottom-sheet dialogs do the same.
 - Small controls — action-item checkboxes, the Event/Task pills, sub-tab pills, the delete icon on Home's cards, the learned-corrections delete x, the settings switches, and the CorrectionPopup Save/Cancel — keep their painted size and gain a padded hit box (`.tap-target` / `.tap-target-lg` in `src/index.css`).
 - `index.html` ships `viewport-fit=cover`, which is what makes `env(safe-area-inset-*)` resolve on iOS.

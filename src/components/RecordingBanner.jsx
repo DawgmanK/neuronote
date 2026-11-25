@@ -39,7 +39,7 @@ export default function RecordingBanner() {
         <motion.div
           className="fixed left-0 right-0 z-40 flex justify-center px-4 pointer-events-none"
           // Sits just below the fixed header, clear of the notch.
-          style={{ top: 'calc(56px + env(safe-area-inset-top))' }}
+          style={{ top: 'calc(var(--header-h) + 6px)' }}
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -12 }}
