@@ -1,6 +1,6 @@
 # NeuroNote — Technical Reference
 
-Implementation notes for NeuroNote Meeting OS v2.8.4: how each subsystem works, every storage key it
+Implementation notes for NeuroNote Meeting OS v2.8.5: how each subsystem works, every storage key it
 writes, and the reasoning behind the trickier decisions. For installation and day-to-day use, start at the
 [project README](../README.md).
 

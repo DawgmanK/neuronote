@@ -282,11 +282,20 @@ function waitForGis(timeoutMs = 10000) {
  * @returns {Promise<object>} the GIS code client
  */
 export async function initGoogleAuth(clientId, codeChallenge) {
+  const oauth2 = await waitForGis()
+  return buildCodeClient(oauth2, clientId, codeChallenge)
+}
+
+/**
+ * The synchronous half of initGoogleAuth(), for when GIS is already loaded.
+ * signIn() uses it so the consent popup opens in the same call stack as the
+ * tap that asked for it — see the note there.
+ */
+function buildCodeClient(oauth2, clientId, codeChallenge) {
   const id = (clientId || getClientId() || '').trim()
-  console.log(`${LOG} initGoogleAuth called, clientId present:`, !!id)
+  console.log(`${LOG} Building code client, clientId present:`, !!id)
   if (!id) throw new Error('No Google OAuth Client ID configured. Add one in Settings.')
 
-  const oauth2 = await waitForGis()
   const client = oauth2.initCodeClient({
     client_id: id,
     scope: GOOGLE_SCOPES,
@@ -468,7 +477,16 @@ export async function signIn() {
       console.log(`${LOG} PKCE skipped — this GIS build does not forward code_challenge (see GIS_SUPPORTS_PKCE)`)
     }
 
-    const client = await initGoogleAuth(clientId, challenge)
+    // v2.8.5 — nothing may be awaited between the tap and requestCode() when it
+    // can be avoided. A browser only opens a popup while it still counts the
+    // call as part of the user's tap; an `await` in between (there used to be
+    // two) can be enough for mobile Safari to treat the popup as unrequested
+    // and block it, which GIS reports as "Failed to open popup window". With
+    // GIS already loaded and PKCE off, everything from here to requestCode()
+    // now runs synchronously inside the click handler.
+    const loaded = window.google?.accounts?.oauth2
+    if (!loaded) console.log(`${LOG} GIS not loaded yet at sign-in — waiting; the popup may be blocked`)
+    const client = buildCodeClient(loaded || await waitForGis(), clientId, challenge)
 
     const response = await new Promise((resolve, reject) => {
       client.callback = (resp) => {
@@ -483,6 +501,20 @@ export async function signIn() {
         resolve(resp)
       }
       client.error_callback = (err) => {
+        console.warn(`${LOG} GIS reported a popup error:`, err?.type, err?.message)
+        // GIS's own wording ("Failed to open popup window") says what happened
+        // but not what to do about it.
+        if (err?.type === 'popup_failed_to_open') {
+          reject(new Error(
+            'your browser blocked the Google sign-in window. Allow pop-ups for this site and try again. ' +
+            'If you opened NeuroNote from your home screen, open it in Safari or Chrome instead and sign in there.'
+          ))
+          return
+        }
+        if (err?.type === 'popup_closed') {
+          reject(new Error('the Google sign-in window was closed before it finished.'))
+          return
+        }
         reject(new Error(err?.message || err?.type || 'Google sign-in was cancelled.'))
       }
       console.log(`${LOG} Opening Google consent popup (access_type=offline, prompt=consent)...`)

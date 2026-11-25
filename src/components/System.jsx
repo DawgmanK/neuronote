@@ -43,6 +43,10 @@ const EYE_PATHS = {
   closed: <><path d="M2 2l16 16M5.5 5.5A7.5 7.5 0 002 10s3 6 8 6c1.5 0 2.9-.4 4-1M10 7a3 3 0 013 3"/></>
 }
 
+// What a Google OAuth Client ID and an Azure application ID look like.
+const GOOGLE_CLIENT_ID_PATTERN = /^[a-z0-9-]+\.apps\.googleusercontent\.com$/i
+const AZURE_CLIENT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const SECTIONS = [
   { id: 'ai', label: 'AI' },
   { id: 'transcription', label: 'Transcripts' },
@@ -115,7 +119,7 @@ function Segmented({ options, value, onChange, label }) {
 }
 
 /** A labelled secret field with a show/hide eye. */
-function SecretField({ id, label, hint, value, onChange, placeholder, shown, onToggleShown }) {
+function SecretField({ id, label, hint, value, onChange, placeholder, shown, onToggleShown, savedValue }) {
   return (
     <div className="mb-3">
       <label className="block text-[13px] font-medium text-ink mb-1.5" htmlFor={id}>
@@ -143,6 +147,11 @@ function SecretField({ id, label, hint, value, onChange, placeholder, shown, onT
           </svg>
         </button>
       </div>
+      {/* Only passed for client IDs, which are identifiers rather than
+          secrets: seeing what is saved is how a wrong paste gets noticed. */}
+      {savedValue && (
+        <p className="text-xs text-muted mt-1.5 break-all">Saved: <span className="text-ink/80">{savedValue}</span></p>
+      )}
     </div>
   )
 }
@@ -330,9 +339,23 @@ export default function System({ settings, onUpdateSettings }) {
   }
 
   const saveGoogleCredentials = () => {
-    const id = googleClientId.trim()
+    // Whitespace is stripped throughout, not just at the ends: an ID copied
+    // from a web page or a chat message often arrives with a line break in it.
+    const id = googleClientId.replace(/\s+/g, '')
     const secret = googleClientSecret.trim()
     if (!id && !secret) return
+    // v2.8.5 — a value that is not a Google Client ID used to be saved as-is
+    // and only failed later, on Google's own page, as "Error 401:
+    // invalid_client". Catch the common mix-ups here (the client secret, an
+    // Azure ID, a project number) while the user can still see the field.
+    if (id && !GOOGLE_CLIENT_ID_PATTERN.test(id)) {
+      toast.show({
+        message: 'That doesn\'t look like a Google Client ID. It ends in ".apps.googleusercontent.com" — copy the Client ID, not the client secret, from Google Cloud Console → Credentials.',
+        type: 'error',
+        duration: 10000
+      })
+      return
+    }
     // Saving a new Client ID invalidates the stored tokens, so do it first.
     if (id) saveClientId(id)
     if (secret) saveClientSecret(secret)
@@ -371,8 +394,17 @@ export default function System({ settings, onUpdateSettings }) {
   // --- Microsoft 365 (v2.5) ------------------------------------------------
   const saveMicrosoftIds = () => {
     const tenant = msTenantId.trim() || DEFAULT_TENANT_ID
-    if (!msClientId.trim() && !microsoft.clientId) return
-    if (msClientId.trim()) saveMicrosoftClientId(msClientId.trim())
+    const typedId = msClientId.replace(/\s+/g, '')
+    if (!typedId && !microsoft.clientId) return
+    if (typedId && !AZURE_CLIENT_ID_PATTERN.test(typedId)) {
+      toast.show({
+        message: 'That doesn\'t look like an Azure Client ID. It is the "Application (client) ID" from your app registration: 32 letters and digits in five groups, like 00000000-0000-0000-0000-000000000000.',
+        type: 'error',
+        duration: 10000
+      })
+      return
+    }
+    if (typedId) saveMicrosoftClientId(typedId)
     saveMicrosoftTenantId(tenant)
     setMsClientId('')
     microsoft.refresh()
@@ -740,6 +772,7 @@ export default function System({ settings, onUpdateSettings }) {
                   placeholder={google.clientId ? 'Saved — paste a new one to replace it' : '123456789-abc.apps.googleusercontent.com'}
                   shown={showClientId}
                   onToggleShown={() => setShowClientId(!showClientId)}
+                  savedValue={google.clientId}
                 />
                 <SecretField
                   id="google-client-secret"
@@ -811,6 +844,7 @@ export default function System({ settings, onUpdateSettings }) {
                   placeholder={microsoft.clientId ? 'Saved — paste a new one to replace it' : '00000000-0000-0000-0000-000000000000'}
                   shown={showMsClientId}
                   onToggleShown={() => setShowMsClientId(!showMsClientId)}
+                  savedValue={microsoft.clientId}
                 />
 
                 <label className="block text-[13px] font-medium text-ink mb-1.5" htmlFor="ms-tenant-id">
