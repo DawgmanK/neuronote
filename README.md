@@ -4,13 +4,14 @@ An AI-powered meeting note-taking app for sales professionals, consultants, and 
 
 ## What it does
 
-- 🎙️ Records meetings on your phone or laptop
+- 🎙️ Records meetings on your phone or laptop, or takes an uploaded recording, photo, or text file
 - ✍️ Transcribes with speaker diarization (AssemblyAI)
 - 🧠 Generates summaries, key points, action items, flashcards, and quizzes — pick OpenAI (GPT-6) or Google Gemini (Gemini 4 Hydrogen, free tier) as your AI provider
 - 📅 Sends action items directly to Google Calendar or Outlook Calendar
 - ✓ Sends tasks to Google Tasks or Microsoft To Do
 - 🔄 Auto-refreshing sign-in — connect once, stay connected
-- 💬 Ask NeuroNote — conversational Q&A across your entire meeting archive
+- 💬 Ask NeuroNote — one bar on the home screen searches your meetings and answers questions across all of them
+- 🔁 Every note says whether AI wrote its summary, and can redo it in one tap
 - 🖼️ Photo capture with OCR for whiteboards/documents
 - 🎯 Tap-to-correct with persistent learning dictionary
 - 🥷 Discreet Mode — screensaver-style UI for sensitive recordings
@@ -32,16 +33,19 @@ Click the button below. Vercel will guide you through:
 
 You'll need free accounts at:
 - **OpenAI** (openai.com) — pay-as-you-go, ~$2-5/month typical use — **or** **Google AI Studio** (aistudio.google.com) for Gemini, free with no credit card required
-- **AssemblyAI** (assemblyai.com) — $50 free credits at signup (~130 hrs)
+- **AssemblyAI** (assemblyai.com) — $50 free credits at signup (roughly 180–240 hours of audio at its current list prices)
 - **Google Cloud OR Microsoft Azure** (optional — for Calendar/Tasks integration)
 
 After deploying:
-1. Open your app URL
-2. Open Settings (bottom right)
-3. Under AI Provider, pick OpenAI or Gemini and enter that provider's API key
-4. Enter your AssemblyAI API key
-5. (Optional) Set up Google or Microsoft OAuth Client ID for Calendar integration
-6. Start recording
+1. Open your app URL. The home screen shows a short "Finish setting up" checklist that walks through the steps below.
+2. Open **Settings** (bottom right).
+3. Under **AI**, pick OpenAI or Gemini, paste that provider's API key, and press **Save and test**. A green line confirms the key works.
+4. Under **Transcripts**, paste your AssemblyAI key and press **Save and test**. A working key switches itself on.
+5. (Optional) Under **Calendar**, set up a Google or Microsoft OAuth Client ID to send action items to your calendar or task list.
+6. Tap the red button in the middle of the bottom bar and start recording.
+
+Without any keys the app still records, using your browser's built-in speech recognition and a basic on-device
+summary. Notes made that way say so, and can be redone with AI once a key is added.
 
 Detailed setup guides are in the `docs/` folder.
 
@@ -59,7 +63,7 @@ is no `.env` file to fill in. Every key is entered in Settings. See `.env.exampl
 
 ## Your data, your keys, your bill
 
-- All API keys are stored in your browser's localStorage — never sent to any server
+- All API keys are stored in your browser's localStorage, and each one is only ever sent to the service it belongs to
 - Recordings, transcripts, and summaries stay on YOUR device
 - API costs bill directly to YOUR OpenAI/Gemini/AssemblyAI accounts
 - The developer of this app has ZERO access to your data, keys, or usage

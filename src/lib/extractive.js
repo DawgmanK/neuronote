@@ -29,7 +29,7 @@ export function extractSummary(text) {
   const normalized = text
     .split('\n')
     .filter(l => l.trim())
-    .map(l => l.replace(/^(Speaker \d+|You|[A-Z][a-z]+):\s*/, '').trim())
+    .map(l => l.replace(/^(Speaker [A-Za-z0-9]+|You|[A-Z][a-z]+):\s*/, '').trim())
     .filter(l => l.length > 5)
     .join('. ')
 

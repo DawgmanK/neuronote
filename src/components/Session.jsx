@@ -622,7 +622,9 @@ export default function Session({ note, onUpdateNote, onOpenSettings, onReindexN
               )}
               <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                 {(note.transcript || '').split('\n').filter(Boolean).map((line, i) => {
-                  const speakerMatch = line.match(/^(Speaker \d+|[A-Za-z]+):\s*(.*)/)
+                  // AssemblyAI labels speakers "Speaker A", "Speaker B"; older notes and the
+                  // browser transcript use "Speaker 1" or a single name such as "You".
+                  const speakerMatch = line.match(/^(Speaker [A-Za-z0-9]+|[A-Za-z]+):\s*(.*)/)
                   if (speakerMatch) {
                     const speaker = speakerMatch[1]
                     const text = speakerMatch[2]
