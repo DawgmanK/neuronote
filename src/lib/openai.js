@@ -1,5 +1,6 @@
 import { getApiKey, addUsage } from './storage.js'
 import { EMBEDDING_MODEL, MODEL_COSTS } from './models.js'
+import { todayISO } from './actionItems.js'
 import { WRITING_STYLE_RULES, ACTION_ITEM_STYLE_RULES, STUDY_MATERIAL_STYLE_RULES } from './prompt-style.js'
 
 // v2.8 — GPT-6 family (was GPT-5.6 in v2.7.1). This is the single place to change a tier's model id.
@@ -49,6 +50,13 @@ async function chatCompletion(model, messages, maxTokens = 4096) {
   if (finishReason === 'length') {
     console.warn('[NeuroNote] WARNING: Response was truncated (finish_reason=length). Increase max_completion_tokens.')
   }
+  // v2.8.2 — a reasoning model can use its whole output budget thinking and
+  // return nothing. Say so, instead of handing an empty string to the parser.
+  if (!content || !content.trim()) {
+    throw new Error(finishReason === 'length'
+      ? 'The AI reply was empty: the model ran out of output budget before answering'
+      : 'The AI reply was empty')
+  }
 
   const cost = (MODEL_COSTS[model] || 0.003) * ((data.usage?.total_tokens || 1000) / 1000)
   addUsage(cost, model)
@@ -73,7 +81,7 @@ function parseJSON(text) {
 }
 
 export async function generateSummary(transcript, model) {
-  const today = new Date().toISOString().split('T')[0]
+  const today = `${todayISO()} (${new Date().toLocaleDateString('en-US', { weekday: 'long' })})`
   const content = await chatCompletion(model, [
     {
       role: 'system',
@@ -83,12 +91,13 @@ Today's date is: ${today}
 
 Return a JSON object with exactly this shape:
 {
+  "title": "A specific 3-8 word title naming what the meeting was about, e.g. 'Acme renewal pricing review'. No quotation marks, no date, no trailing period.",
   "summary": {
-    "paragraph": "A 2-4 sentence overview of the entire meeting in complete, polished prose.",
-    "bullets": ["Complete sentence summarizing key point 1.", "Complete sentence summarizing key point 2.", "...3-7 bullet points total"],
+    "paragraph": "An overview in complete, polished prose: what the meeting was about, what was concluded, and what happens next. 2-4 sentences for a short meeting, up to 8 for a long one.",
+    "bullets": ["Complete sentence stating key point 1, with the specifics.", "Complete sentence stating key point 2, with the specifics.", "...up to 10 bullet points; more for a longer meeting, none when there is nothing to add beyond the action items"],
     "actions": [{
       "text": "Complete sentence describing the action",
-      "owner": "Name of person responsible, or 'Unknown'",
+      "owner": "Name of the person responsible, 'Me' for the speaker's own tasks, or 'Unknown'",
       "dueDate": "YYYY-MM-DD or null",
       "dueTime": "HH:MM in 24hr, or null",
       "suggestedType": "event or task",
@@ -100,17 +109,24 @@ Return a JSON object with exactly this shape:
 }
 
 Rules:
-- Every string must be a complete, well-formed sentence — never a fragment or truncated text.
+- Write for someone who missed the meeting. They should finish reading knowing what actually happened, not merely which topics came up.
+- Be specific. Keep the names, numbers, amounts, dates and reasons that matter. "Acme asked for a 10% discount on a two-year term" is useful; "Pricing was discussed" is not.
+- Say each thing once. An item listed under "actions" must not be repeated under "bullets" or "followups". When a recording is mostly a list of things to do, put them in "actions" and keep "bullets" for context that is not a task, even if that leaves "bullets" empty.
+- Scale the detail to the length of the transcript. A long meeting deserves a fuller overview and more key points; a one-minute recording needs only a sentence or two and may have a single bullet. Never pad.
+- The transcript comes from speech recognition and may contain misheard words, missing punctuation, or wrongly split speakers. Work out the intended meaning from context and do not repeat obvious recognition errors.
+- Speakers may be labelled "Speaker A", "Speaker 1" or "You". When someone's real name is clear from the conversation, use the name instead of the label.
+- If the transcript is too short or too garbled to summarize, say so plainly in "paragraph" and return empty arrays rather than inventing content.
+- Every string except "title" must be a complete, well-formed sentence — never a fragment or truncated text.
 - "bullets" should be high-level SYNTHESIZED takeaways, NOT raw transcript excerpts. Rephrase in your own words.
 - "actions" are ONLY concrete commitments, assignments, or tasks that someone explicitly agreed to do (e.g., "I will send the report by Friday"). Do NOT include rhetorical statements, opinions, wishes, or general commentary. If no real action items exist, return an empty array [].
 - "decisions" are only explicit choices that were made. If none, return [].
-- "followups" are only open questions or clearly stated next steps. If none, return [].
+- "followups" are only open questions and unresolved points that nobody has taken on. Anything with an owner belongs in "actions" instead. If none, return [].
 - Write in professional, clear language. SYNTHESIZE the content — do not copy/paste transcript text.
 - Return ONLY the JSON object. No markdown fences, no explanation, no commentary outside the JSON.
 
 Action item field rules:
 - "text": a complete, well-formed sentence describing the action.
-- "owner": the name of the person responsible. Use "Unknown" when nobody is clearly named.
+- "owner": the name of the person responsible. When the speaker takes something on themselves ("I'll send it", "I need to call her"), use "Me", or their name if it is clear from the conversation. Use "Unknown" only when a task is assigned to nobody identifiable.
 - "dueDate": resolve relative dates against today's date (${today}). "tomorrow" is the next calendar day, "Friday" is the next upcoming Friday, "end of month" is the last day of the current month, "next week" is 7 days from today. If no date is mentioned at all, use null.
 - "dueTime": a 24-hour "HH:MM" time when a specific time is stated, otherwise null.
 - "suggestedType": use "event" when the item mentions a meeting, call, sync, demo, or a scheduled time. Use "task" when the item is to send, email, follow up, prepare, review, or check with someone. When neither clearly applies, default to "task".
@@ -121,7 +137,7 @@ ${WRITING_STYLE_RULES}
 ${ACTION_ITEM_STYLE_RULES}`
     },
     { role: 'user', content: `Summarize this meeting transcript:\n\n${transcript}` }
-  ], 4096)
+  ], 16000)
   const parsed = parseJSON(content)
   console.log('[NeuroNote] Parsed summary:', JSON.stringify(parsed, null, 2).slice(0, 1000))
   return parsed

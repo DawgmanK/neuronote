@@ -11,8 +11,8 @@ import { getApiKey, getItem, setItem } from '../lib/storage'
 import { getActiveModel } from '../lib/models'
 import { transcribeAudio } from '../lib/assemblyai'
 import { applyCorrections } from '../lib/corrections'
-import { generateSummary, generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
-import { extractSummary } from '../lib/extractive'
+import { generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
+import { summarizeTranscript, summaryFields, titleFromSummary } from '../lib/summarize'
 
 /** Set once the v2.4 legal notice has been acknowledged. */
 const DISCLAIMER_KEY = 'discreet-disclaimer-acknowledged'
@@ -152,9 +152,11 @@ export default function Capture({ onSaveNote, settings }) {
     setUploadProcessing(true)
 
     let content = ''
+    let transcriptSource = 'file'
     const type = file.type
 
     if (type.startsWith('audio/')) {
+      transcriptSource = 'assemblyai'
       setUploadStep('Transcribing audio...')
       const blob = new Blob([await file.arrayBuffer()], { type })
       try {
@@ -169,6 +171,7 @@ export default function Capture({ onSaveNote, settings }) {
         content = 'Failed to transcribe audio: ' + e.message
       }
     } else if (type.startsWith('image/')) {
+      transcriptSource = 'photo'
       setUploadStep('Extracting text from image...')
       const reader = new FileReader()
       const base64 = await new Promise(resolve => {
@@ -186,21 +189,10 @@ export default function Capture({ onSaveNote, settings }) {
     }
 
     const aiKeyConfigured = hasActiveApiKey()
-    let summaryData = null
     let flashcardData = null
 
-    try {
-      setUploadStep('Summarizing...')
-      if (aiKeyConfigured) {
-        console.log('[NeuroNote] Upload: calling generateSummary with', content.length, 'chars')
-        summaryData = await generateSummary(content, getActiveModel(settings))
-      } else {
-        summaryData = extractSummary(content)
-      }
-    } catch (e) {
-      console.error('[NeuroNote] Upload summary failed:', e)
-      summaryData = extractSummary(content)
-    }
+    setUploadStep('Writing the summary...')
+    const summaryResult = await summarizeTranscript(content, settings)
 
     try {
       if (aiKeyConfigured) {
@@ -213,14 +205,14 @@ export default function Capture({ onSaveNote, settings }) {
 
     const note = {
       id: Date.now(),
-      title: file.name.replace(/\.[^/.]+$/, '').slice(0, 40),
+      title: titleFromSummary(summaryResult) || file.name.replace(/\.[^/.]+$/, '').slice(0, 40),
+      titleAuto: true,
       date: new Date().toISOString(),
       duration: 0,
       transcript: content,
       originalTranscript: content,
-      summary: summaryData?.summary || { paragraph: '', bullets: [], actions: [] },
-      decisions: summaryData?.decisions || [],
-      followups: summaryData?.followups || [],
+      transcriptSource,
+      ...summaryFields(summaryResult),
       flashcards: flashcardData?.flashcards || [],
       quiz: flashcardData?.quiz || [],
       photos: [],

@@ -17,8 +17,8 @@ import { getApiKey, getItem, setItem } from '../lib/storage'
 import { getActiveModel } from '../lib/models'
 import { transcribeAudio } from '../lib/assemblyai'
 import { applyCorrections } from '../lib/corrections'
-import { generateSummary, generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
-import { extractSummary } from '../lib/extractive'
+import { generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
+import { summarizeTranscript, summaryFields, titleFromSummary } from '../lib/summarize'
 import {
   saveInProgress,
   loadInProgress,
@@ -515,7 +515,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
   // ---------------------------------------------------------------------------
   // Turning a transcript into a saved note
   // ---------------------------------------------------------------------------
-  const buildAndSaveNote = useCallback(async ({ transcriptText, speakers, duration, capturedPhotos, type }) => {
+  const buildAndSaveNote = useCallback(async ({ transcriptText, speakers, duration, capturedPhotos, type, transcriptSource }) => {
     let text = transcriptText
 
     // Photo OCR — same flow as v2.2, just running from the provider so photos
@@ -531,23 +531,12 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
       }
     }
 
-    let summaryData = null
     let flashcardData = null
 
-    try {
-      setProcessingStep('Generating summary...')
-      if (hasActiveApiKey()) {
-        console.log('[NeuroNote] Calling generateSummary with', text.length, 'chars, model:', getActiveModel(settingsRef.current))
-        summaryData = await generateSummary(text, getActiveModel(settingsRef.current))
-        console.log('[NeuroNote] Summary result:', JSON.stringify(summaryData).slice(0, 500))
-      } else {
-        console.log('[NeuroNote] No AI provider key, using extractive fallback')
-        summaryData = extractSummary(text)
-      }
-    } catch (e) {
-      console.error('[NeuroNote] Summary generation FAILED, falling back to extractive:', e.message, e)
-      summaryData = extractSummary(text)
-    }
+    // v2.8.2 — summarizeTranscript never throws: it reports whether the AI
+    // wrote the summary or the on-device stand-in did, and why.
+    setProcessingStep('Writing the summary...')
+    const summaryResult = await summarizeTranscript(text, settingsRef.current)
 
     try {
       setProcessingStep('Generating flashcards...')
@@ -560,19 +549,25 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
       console.error('[NeuroNote] Flashcard generation FAILED:', e.message, e)
     }
 
+    // The AI names the meeting when it can; otherwise fall back to the first
+    // words that were said.
     const firstLine = text.split('\n')[0]?.slice(0, 50) || 'Meeting'
-    const title = firstLine.replace(/^(Speaker \d+|Speaker [A-Z]|You): /i, '').slice(0, 40) || `Meeting ${new Date().toLocaleDateString()}`
+    const title = titleFromSummary(summaryResult)
+      || firstLine.replace(/^(Speaker \d+|Speaker [A-Z]|You): /i, '').slice(0, 40)
+      || `Meeting ${new Date().toLocaleDateString()}`
 
     const note = {
       id: Date.now(),
       title,
+      // Cleared when the user renames the note, so "Redo summary" never
+      // overwrites a title someone chose.
+      titleAuto: true,
       date: new Date().toISOString(),
       duration,
       transcript: text,
       originalTranscript: text,
-      summary: summaryData?.summary || { paragraph: '', bullets: [], actions: [] },
-      decisions: summaryData?.decisions || [],
-      followups: summaryData?.followups || [],
+      transcriptSource: transcriptSource || 'browser',
+      ...summaryFields(summaryResult),
       flashcards: flashcardData?.flashcards || [],
       quiz: flashcardData?.quiz || [],
       photos: capturedPhotos || [],
@@ -621,6 +616,8 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
 
     let transcriptText = ''
     let speakers = 1
+    // Which engine the saved transcript came from; shown on the note.
+    let transcriptSource = 'browser'
 
     try {
       if (wasChunked) {
@@ -641,6 +638,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
         transcriptText = combineSegments(segmentsRef.current)
         const utterances = combineUtterances(segmentsRef.current, useDiarization)
         speakers = useDiarization ? countSpeakers(utterances) : 1
+        transcriptSource = 'assemblyai'
 
         const allFailed = segmentsRef.current.length > 0 &&
           segmentsRef.current.every(s => s.status === SEGMENT_STATUS.FAILED)
@@ -650,6 +648,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
             liveTranscriptRef.current.map(t => `${t.speaker}: ${t.text}`).join('\n')
           )
           transcriptText = fallback || transcriptText || 'Transcription failed.'
+          transcriptSource = 'browser'
         }
       } else {
         // No AssemblyAI configured: v2.2 behaviour, the Web Speech transcript.
@@ -660,6 +659,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
       }
     } catch (e) {
       console.error(`${LOG} Transcription stage failed:`, e)
+      transcriptSource = 'browser'
       transcriptText = applyCorrections(
         liveTranscriptRef.current.map(t => `${t.speaker}: ${t.text}`).join('\n')
       ) || 'Transcription failed.'
@@ -673,9 +673,10 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
         speakers,
         duration,
         capturedPhotos,
-        type: 'recording'
+        type: 'recording',
+        transcriptSource
       })
-      toast.update(progressToast, { message: 'Done! Opening session...', type: 'success', duration: 2500 })
+      toast.update(progressToast, { message: 'Done. Opening your note…', type: 'success', duration: 2500 })
       // The recording is safely inside a note now, so the crash-recovery copy
       // has done its job.
       await clearInProgress(sessionId)
@@ -831,9 +832,10 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
         speakers,
         duration: record.elapsedSeconds,
         capturedPhotos: [],
-        type: 'recording'
+        type: 'recording',
+        transcriptSource: 'assemblyai'
       })
-      toast.update(progressToast, { message: 'Recovered! Opening session...', type: 'success', duration: 2500 })
+      toast.update(progressToast, { message: 'Recovered. Opening your note…', type: 'success', duration: 2500 })
       await clearInProgress(record.sessionId)
     } catch (e) {
       console.error(`${LOG} Could not build the recovered note:`, e)
