@@ -8,6 +8,7 @@ import CorrectableText from './CorrectableText'
 import { useToast } from './ui/Toast'
 import useIntegration from '../hooks/useIntegration'
 import { SIGNED_IN_MESSAGE } from '../services/google-auth'
+import { sendNoteToHandoff, isSalesCall, buildMailtoLink } from '../lib/grok-handoff'
 import { addedLabel } from '../services/action-sync'
 import { normalizeActionItem } from '../lib/actionItems'
 import { replacePreservingCase } from '../lib/corrections'
@@ -46,6 +47,7 @@ export default function Session({ note, onUpdateNote, onOpenSettings, onReindexN
   const [dialog, setDialog] = useState(null)      // { index, type, providers }
   const [showReviewAll, setShowReviewAll] = useState(false)
   const [resummarizing, setResummarizing] = useState(false)
+  const [sendingHandoff, setSendingHandoff] = useState(false)
   const { ask } = useRecordingContext()
   const toast = useToast()
   const { provider, google, microsoft, activeProviders, showGoogle, showMicrosoft } = useIntegration()
@@ -126,7 +128,11 @@ export default function Session({ note, onUpdateNote, onOpenSettings, onReindexN
 
     setResummarizing(true)
     try {
-      const result = await summarizeTranscript(current.transcript || '', getSettings())
+      const result = await summarizeTranscript(
+        current.transcript || '',
+        getSettings(),
+        isSalesCall(current) ? { kind: current.kind } : {}
+      )
 
       // Never replace a summary with the on-device stand-in from here: record
       // why the AI did not answer, and leave the text alone.
@@ -165,7 +171,7 @@ export default function Session({ note, onUpdateNote, onOpenSettings, onReindexN
 
       // A note first made without AI has no study cards either. Fill them in
       // now; cards that already exist are left alone.
-      if (!(updated.flashcards?.length) && !(updated.quiz?.length)) {
+      if (!isSalesCall(updated) && !(updated.flashcards?.length) && !(updated.quiz?.length)) {
         try {
           const cards = await generateFlashcards(updated.transcript || '')
           updated = { ...noteRef.current, flashcards: cards?.flashcards || [], quiz: cards?.quiz || [] }
@@ -181,6 +187,51 @@ export default function Session({ note, onUpdateNote, onOpenSettings, onReindexN
     } finally {
       setResummarizing(false)
     }
+  }
+
+  /**
+   * v2.9 — save this note into the Google Drive handoff folder, where Grok (or
+   * any assistant connected to that Drive) can read and log it. Sales call
+   * reports are sent automatically when that is switched on; this is the
+   * manual route, and the way to send again after an edit.
+   */
+  const sendToGrok = async () => {
+    if (sendingHandoff || !noteRef.current) return
+    setSendingHandoff(true)
+    try {
+      const result = await sendNoteToHandoff(noteRef.current)
+      if (!result.ok) {
+        const needsSettings = result.needsReauth || result.needsDriveScope
+        toast.show({
+          message: `Couldn't save to your Grok folder: ${result.error}`,
+          type: 'error',
+          duration: 12000,
+          ...(needsSettings && onOpenSettings ? { actionLabel: 'Open Settings', onAction: onOpenSettings } : {})
+        })
+        return
+      }
+      const updated = { ...noteRef.current, handoff: result.handoff }
+      noteRef.current = updated
+      onUpdateNote(updated)
+      toast.show({
+        message: 'Saved to your Grok folder in Google Drive.',
+        type: 'success',
+        link: result.handoff.link,
+        linkLabel: 'Open'
+      })
+    } finally {
+      setSendingHandoff(false)
+    }
+  }
+
+  // Records that the mail app was opened for this note. Whether the message
+  // was actually sent is something only the mail app knows.
+  const markEmailOpened = (to) => {
+    const current = noteRef.current
+    if (!current) return
+    const updated = { ...current, handoffEmail: { openedAt: new Date().toISOString(), to } }
+    noteRef.current = updated
+    onUpdateNote(updated)
   }
 
   const copyTranscript = () => {
@@ -390,6 +441,92 @@ export default function Session({ note, onUpdateNote, onOpenSettings, onReindexN
         >
           {activeSubTab === 'summary' && (
             <div className="space-y-4">
+              {/* v2.9 — where this note stands with Grok: emailed, saved to the
+                  Drive handoff folder, or neither. Always shown on a sales call
+                  report; on other notes only once a handoff route is set up. */}
+              {(() => {
+                const prefs = getSettings()
+                const emailTo = prefs.handoffEmail
+                if (!(isSalesCall(note) || note.handoff || prefs.grokHandoff || emailTo)) return null
+                const mailto = emailTo ? buildMailtoLink(emailTo, note) : null
+                const showDrive = !!(prefs.grokHandoff || note.handoff || !mailto)
+                const sent = !!note.handoff
+                return (
+                  <div className={`rounded-2xl border p-4 ${sent ? 'border-ok/30 bg-ok/[0.05]' : 'border-white/10 bg-white/[0.04]'}`}>
+                    <p className="font-mono font-semibold text-[15px] text-ink">
+                      {sent ? 'In your Grok folder' : note.handoffEmail ? 'Email drafted for Grok' : 'Not sent to Grok yet'}
+                    </p>
+                    <div className="text-xs text-muted leading-relaxed mt-0.5 space-y-0.5">
+                      {sent && (
+                        <p>
+                          Saved to Google Drive {formatDate(note.handoff.sentAt)}.{' '}
+                          <a href={note.handoff.link} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Open the document ↗</a>
+                        </p>
+                      )}
+                      {note.handoffEmail && (
+                        <p className="break-words">
+                          Mail opened {formatDate(note.handoffEmail.openedAt)} to {note.handoffEmail.to}. NeuroNote can&apos;t tell whether it was sent.
+                        </p>
+                      )}
+                      {!sent && !note.handoffEmail && <p>Send this report to Grok so it can log it.</p>}
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {mailto && (
+                        // A real link, so the mail app opens straight from the
+                        // tap; nothing may run between the tap and the link.
+                        <a
+                          href={mailto}
+                          onClick={() => markEmailOpened(emailTo)}
+                          className="btn-primary tap-target inline-flex items-center justify-center px-4 rounded-xl font-mono text-[13px] font-semibold whitespace-nowrap"
+                        >
+                          {note.handoffEmail ? 'Email again' : 'Email to Grok'}
+                        </a>
+                      )}
+                      {showDrive && (
+                        <motion.button
+                          onClick={sendToGrok}
+                          disabled={sendingHandoff}
+                          className={`${sent || mailto ? 'btn-ghost' : 'btn-primary'} tap-target inline-flex items-center justify-center gap-2 px-4 rounded-xl font-mono text-[13px] font-semibold whitespace-nowrap disabled:opacity-60`}
+                          whileTap={{ scale: 0.96 }}
+                        >
+                          {sendingHandoff ? 'Sending…' : sent ? 'Save to Drive again' : mailto ? 'Save to Drive folder' : 'Send to Grok'}
+                        </motion.button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* v2.9 — the accounts a sales call report covered. */}
+              {Array.isArray(note.sales?.accounts) && note.sales.accounts.length > 0 && (
+                <GlassCard hoverable={false}>
+                  <h3 className="section-label mb-3">Accounts</h3>
+                  {note.sales.outcome && (
+                    <CorrectableText as="p" className="text-sm leading-relaxed mb-3" text={note.sales.outcome} onCorrection={handleCorrection} />
+                  )}
+                  <ul className="space-y-3">
+                    {note.sales.accounts.map((account, i) => (
+                      <li key={i} className={i > 0 ? 'border-t border-white/10 pt-3' : ''}>
+                        <p className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono font-semibold text-[15px] text-ink">{account.customer || 'Unnamed account'}</span>
+                          {account.relationship && account.relationship !== 'unknown' && (
+                            <span className="pill">{account.relationship}</span>
+                          )}
+                        </p>
+                        {account.contact && <p className="text-xs text-muted mt-0.5">Contact: {account.contact}</p>}
+                        {account.notes && <p className="text-sm leading-relaxed mt-1.5">{account.notes}</p>}
+                        {account.nextStep && (
+                          <p className="text-sm leading-relaxed mt-1.5">
+                            <span className="text-accent">Next:</span> {account.nextStep}
+                            {account.nextStepDate && <span className="text-xs text-muted ml-2 whitespace-nowrap">{formatDue(account.nextStepDate)}</span>}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </GlassCard>
+              )}
+
               {/* v2.8.2 — a stand-in summary says that it is one. */}
               {note.summarySource === 'local' && (
                 <div className="rounded-2xl border border-accent/40 bg-accent/[0.07] p-4">

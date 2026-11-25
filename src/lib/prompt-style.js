@@ -17,6 +17,31 @@ export const ACTION_ITEM_STYLE_RULES = `Each action item's "text" must read as a
   BAD:  "Um, so I need to like send Mark that, uh, pricing sheet thing by Friday."
 Never carry transcript phrasing into action item text.`
 
+// v2.9 — appended to the summary prompt, in both providers, when the
+// recording was made on the Sales call tab. It adds a "sales" object to the
+// same JSON the ordinary summary returns, so nothing else has to change.
+export const SALES_CALL_RULES = `SALES CALL REPORT — this recording is a salesperson's own spoken report, dictated after visiting one or more customers or prospects in person. It is one person talking, not a conversation.
+
+Add a "sales" object to the JSON, alongside "summary":
+"sales": {
+  "outcome": "One or two sentences on what came of the visit or visits overall.",
+  "accounts": [{
+    "customer": "The company or account, exactly as named",
+    "contact": "The person or people met or mentioned there, or null",
+    "relationship": "customer, prospect, or unknown",
+    "notes": "What happened or was discussed with this account, in one to three sentences",
+    "nextStep": "The next thing to do for this account, or null",
+    "nextStepDate": "YYYY-MM-DD or null"
+  }]
+}
+
+Rules for a sales call report:
+- One entry in "accounts" for every company or account mentioned, in the order they came up. A report often covers several.
+- "title" names the account and the purpose, for example "Country's North — Friday order check". When several accounts are covered, name the visit instead, for example "Tuesday customer follow-ups".
+- The salesperson's own to-dos go in "actions" with owner "Me", each naming the account it belongs to.
+- Company and people's names matter more than anything else here. Keep them exactly as said, and when speech recognition has clearly mangled one, use the most plausible reading rather than repeating the error.
+- Use only what was said. Leave a field null, or the list empty, rather than guessing.`
+
 // Extra guidance specific to flashcards/quiz — appended wherever a prompt
 // produces study material.
 export const STUDY_MATERIAL_STYLE_RULES = `Questions and answers must read as clean study material, not transcript excerpts.`

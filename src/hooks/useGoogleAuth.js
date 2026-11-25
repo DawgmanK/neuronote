@@ -6,6 +6,7 @@ import {
   getAccountEmail,
   getClientId,
   getClientSecret,
+  hasDriveScope,
   signIn as authSignIn,
   signOut as authSignOut
 } from '../services/google-auth'
@@ -19,6 +20,8 @@ export default function useGoogleAuth() {
   // v2.6 — true once a refresh token is stored, i.e. the session renews itself.
   const [autoRefresh, setAutoRefresh] = useState(() => hasAutoRefresh())
   const [hasClientSecret, setHasClientSecret] = useState(() => !!getClientSecret())
+  // v2.9 — whether this sign-in was granted the Drive handoff permission.
+  const [hasDrive, setHasDrive] = useState(() => hasDriveScope())
   const [signingIn, setSigningIn] = useState(false)
 
   const refresh = useCallback(() => {
@@ -27,6 +30,7 @@ export default function useGoogleAuth() {
     setClientId(getClientId())
     setAutoRefresh(hasAutoRefresh())
     setHasClientSecret(!!getClientSecret())
+    setHasDrive(hasDriveScope())
   }, [])
 
   useEffect(() => {
@@ -63,5 +67,5 @@ export default function useGoogleAuth() {
     refresh()
   }, [refresh])
 
-  return { signedIn, email, clientId, autoRefresh, hasClientSecret, signingIn, signIn, signOut, refresh }
+  return { signedIn, email, clientId, autoRefresh, hasClientSecret, hasDrive, signingIn, signIn, signOut, refresh }
 }

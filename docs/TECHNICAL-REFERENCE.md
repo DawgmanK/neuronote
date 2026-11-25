@@ -1,6 +1,6 @@
 # NeuroNote — Technical Reference
 
-Implementation notes for NeuroNote Meeting OS v2.8.5: how each subsystem works, every storage key it
+Implementation notes for NeuroNote Meeting OS v2.9.0: how each subsystem works, every storage key it
 writes, and the reasoning behind the trickier decisions. For installation and day-to-day use, start at the
 [project README](../README.md).
 
@@ -117,6 +117,22 @@ The component classes (`.glass`, `.sheet`, `.btn-primary`, `.btn-ghost`, `.pill`
 A note whose summary is a stand-in shows a notice at the top of its Summary tab with **Summarize with AI** (or **Try again** after a failure). Every AI summary has a **Redo summary** link under it. Redo keeps ticked and already-sent action items whose wording is unchanged and asks first when a note has any, never overwrites a title the user typed, re-indexes the note for Ask, and generates study cards if the note had none. Notes saved before v2.8.2 carry none of these fields and show no notice, but can still be redone.
 
 The AI also writes the note's title. The summary prompt is kept word-for-word identical between `openai.js` and `gemini.js`; it asks for specifics, scales detail to the length of the transcript, works around speech-recognition errors, lists each item once, and marks the speaker's own tasks as owned by "Me". Relative due dates are resolved against the **local** date and weekday (the UTC date is already the next day on a US evening).
+
+### Sales call reports and the Grok handoff folder (v2.9)
+
+NeuroNote keeps everything in the browser, so nothing outside the device can read a note. The handoff folder is the way out: a note is saved as a Google Doc in one Drive folder, and an assistant with a Google Drive connector reads it from its own side. "Send to Grok" never talks to Grok.
+
+**Sales call tab.** Record has three tabs: Meeting, Sales call and Upload. Sales call records exactly as Meeting does; `startRecording({ kind: 'sales-call' })` marks the recording, and the kind is saved with the crash-recovery copy so a recovered recording keeps it. It is meant for a spoken report dictated after an in-person visit, not for recording the visit itself.
+
+**The report.** For a sales call, `SALES_CALL_RULES` (in `prompt-style.js`, appended in both providers) adds a `sales` object to the summary JSON: an overall `outcome` and one entry in `accounts` per company mentioned, each with `customer`, `contact`, `relationship`, `notes`, `nextStep` and `nextStepDate`. The note is saved with `kind: 'sales-call'` and the `sales` object, shows an Accounts card, and gets no study cards.
+
+**The folder.** `services/google-drive.js` finds or creates a folder named "NeuroNote Sales Calls" and uploads each report as HTML converted to a Google Doc (`buildCallDocument()` in `lib/grok-handoff.js` writes it: a short header, then Summary, Outcome, Accounts, Key points, Action items, Decisions, Open questions and Transcript). The folder's id is cached; if the folder has been deleted the upload's 404 triggers one fresh lookup and retry. A saved note records `handoff: { sentAt, fileId, link, folderLink }`.
+
+**Permission.** The scope is `drive.file`, the narrowest Drive scope: the app can see only files it created. It is requested only once the handoff is switched on (`getRequestedScopes()` in `google-auth.js`), so other users' consent screens are unchanged. The Google Drive API must be enabled in the same Cloud project as the OAuth client; the app says so if it is not.
+
+**Sending.** With "Send sales calls to the folder" on (Settings → Calendar → Grok handoff), a sales call report is sent as soon as it is saved. Every note also has a Send to Grok button, shown on sales calls always and on other notes once the handoff is in use. Settings has a "Send a test document" button for checking the setup without recording.
+
+**Email instead of Drive.** The no-setup route. With an address saved under Settings → Calendar → Grok handoff (`settings.handoffEmail`, kept in this browser only), each note gets an "Email to Grok" button, and a finished sales call report offers one in a toast. NeuroNote has no server and cannot send mail, so the button is a `mailto:` link built by `buildMailtoLink()`: it opens the device's mail app with the address, subject and a plain-text report filled in, and the user presses Send. The report is kept to about 6,000 characters by shortening the transcript, which comes last. A note records `handoffEmail: { openedAt, to }` when the mail app is opened; whether the message was sent is not something the app can know.
 
 ### Microsoft 365: Outlook Calendar + Microsoft To Do (v2.5)
 
@@ -384,6 +400,8 @@ The app is installable as a Progressive Web App. On mobile, use "Add to Home Scr
 | `neuronote:usage` | API usage tracking |
 | `neuronote:ai:status:openai`, `neuronote:ai:status:gemini` | Outcome of the most recent AI request per provider, shown as the status line in Settings (v2.7.2) |
 | `neuronote:setup-checklist-dismissed` | Set when the first-run checklist on Home is closed (v2.8) |
+| `neuronote:google:drive-wanted` | Set once the Grok handoff is switched on, so the next Google sign-in also asks for the `drive.file` scope (v2.9) |
+| `neuronote:handoff:folder` | Cached id and link of the "NeuroNote Sales Calls" Drive folder (v2.9) |
 | `neuronote:google:clientid` | Google OAuth Client ID |
 | `neuronote:google:tokens` | Google access token, refresh token, `expires_at`, account email (v2.6) |
 | `neuronote:google:clientsecret` | Optional Google client secret, only if your OAuth client demands one (v2.6) |

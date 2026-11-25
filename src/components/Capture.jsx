@@ -14,6 +14,7 @@ import { applyCorrections } from '../lib/corrections'
 import { generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
 import { summarizeTranscript, summaryFields, titleFromSummary } from '../lib/summarize'
 import { useToast } from './ui/Toast'
+import { hasDriveScope } from '../services/google-auth'
 
 // v2.8.3 — what an uploaded file is, judged by its type AND its name.
 // Browsers report .mp4 and .webm as video/* even when they hold only audio
@@ -162,7 +163,9 @@ export default function Capture({ onSaveNote, settings }) {
       }
     }
 
-    const started = await startRecording()
+    // v2.9 — the Sales call tab records exactly like a meeting; what differs
+    // is the report the summary produces and where it is sent afterwards.
+    const started = await startRecording({ kind: mode === 'sales' ? 'sales-call' : 'meeting' })
     // Only hide the screen once there is genuinely a recording to hide; a failed
     // start must leave the user looking at the error, not at a black screen.
     if (started && discreetMode) enterDiscreet()
@@ -292,7 +295,7 @@ export default function Capture({ onSaveNote, settings }) {
       {!isRecording && !processing && (
         <div className="flex justify-center mb-8">
           <div className="flex gap-1 p-1 rounded-full bg-white/[0.05] border border-white/10" role="tablist" aria-label="Capture mode">
-            {[['record', 'Record'], ['upload', 'Upload a file']].map(([id, label]) => (
+            {[['record', 'Meeting'], ['sales', 'Sales call'], ['upload', 'Upload']].map(([id, label]) => (
               <button
                 key={id}
                 role="tab"
@@ -301,7 +304,7 @@ export default function Capture({ onSaveNote, settings }) {
                 className="tap-target -my-2 flex items-center"
               >
                 <span
-                  className={`block px-5 py-1.5 rounded-full font-mono text-[13px] font-medium transition-all ${
+                  className={`block px-4 py-1.5 rounded-full font-mono text-[13px] font-medium whitespace-nowrap transition-all ${
                     mode === id ? 'bg-white/[0.12] text-ink chrome-ring' : 'text-muted hover:text-ink'
                   }`}
                 >
@@ -313,7 +316,7 @@ export default function Capture({ onSaveNote, settings }) {
         </div>
       )}
 
-      {mode === 'record' || isRecording || isProcessing ? (
+      {mode !== 'upload' || isRecording || isProcessing ? (
         <div className="flex flex-col items-center">
           {!isRecording && !processing && (
             <motion.div
@@ -343,10 +346,33 @@ export default function Capture({ onSaveNote, settings }) {
                 </span>
               </motion.button>
 
-              <p className="font-mono font-semibold text-lg mt-6">Tap to record</p>
-              <p className="text-sm text-muted mt-1 text-center max-w-xs">
-                Keeps recording if you switch tabs or lock your screen.
+              <p className="font-mono font-semibold text-lg mt-6">
+                {mode === 'sales' ? 'Tap to record your call report' : 'Tap to record'}
               </p>
+              {mode === 'sales' ? (
+                <>
+                  <p className="text-sm text-muted mt-1 text-center max-w-xs">
+                    Say who you saw, what happened, and what comes next. Cover as many customers as you like.
+                  </p>
+                  {/* v2.9 — where the report goes once it is written. */}
+                  {settings?.grokHandoff && hasDriveScope() ? (
+                    <p className="pill pill-ok mt-3 !py-1 !px-3 !text-xs">Goes to your Grok folder when you stop</p>
+                  ) : settings?.handoffEmail ? (
+                    <p className="pill pill-ok mt-3 !py-1 !px-3 !text-xs">You&apos;ll get an Email to Grok button when you stop</p>
+                  ) : (
+                    <button
+                      onClick={() => navigateToTab('system')}
+                      className="pill pill-accent mt-3 !py-1.5 !px-3 !text-xs !whitespace-normal text-center hover:brightness-125 transition"
+                    >
+                      Set up sending to Grok in Settings →
+                    </button>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted mt-1 text-center max-w-xs">
+                  Keeps recording if you switch tabs or lock your screen.
+                </p>
+              )}
 
               {/* v2.8 — the two pre-meeting choices as switches, with one line
                   of explanation that follows whichever is on. */}

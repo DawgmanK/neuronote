@@ -38,6 +38,33 @@ export const GOOGLE_SCOPES = [
   'openid'
 ].join(' ')
 
+// v2.9 — the Google Drive handoff folder. drive.file is the narrowest Drive
+// scope: the app can see and change only files it created itself. It is asked
+// for only once the user switches the handoff on, so everyone else's consent
+// screen stays exactly as it was.
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+const DRIVE_WANTED_KEY = 'google:drive-wanted'
+
+export function isDriveWanted() {
+  return !!getItem(DRIVE_WANTED_KEY)
+}
+
+export function setDriveWanted(wanted) {
+  if (wanted) setItem(DRIVE_WANTED_KEY, true)
+  else removeItem(DRIVE_WANTED_KEY)
+}
+
+/** The scopes the next sign-in will ask for. */
+export function getRequestedScopes() {
+  return isDriveWanted() ? `${GOOGLE_SCOPES} ${DRIVE_SCOPE}` : GOOGLE_SCOPES
+}
+
+/** Whether the current session was granted Drive access. */
+export function hasDriveScope() {
+  const scope = getStoredTokens()?.scope || ''
+  return isSignedIn() && scope.split(/\s+/).includes(DRIVE_SCOPE)
+}
+
 /** Fired on window whenever sign-in state changes so any component can react. */
 export const AUTH_EVENT = 'neuronote:google:auth-changed'
 
@@ -298,7 +325,7 @@ function buildCodeClient(oauth2, clientId, codeChallenge) {
 
   const client = oauth2.initCodeClient({
     client_id: id,
-    scope: GOOGLE_SCOPES,
+    scope: getRequestedScopes(),
     ux_mode: 'popup',
     // Required for a refresh token to be issued at all...
     access_type: 'offline',
@@ -310,7 +337,7 @@ function buildCodeClient(oauth2, clientId, codeChallenge) {
     callback: () => {},      // replaced per-request in signIn()
     error_callback: () => {}
   })
-  console.log(`${LOG} Code client initialized for scopes:`, GOOGLE_SCOPES)
+  console.log(`${LOG} Code client initialized for scopes:`, getRequestedScopes())
   return client
 }
 
@@ -533,7 +560,7 @@ export async function signIn() {
       refresh_token: data.refresh_token || '',
       expires_at: Date.now() + expiresIn * 1000,
       email: emailFromIdToken(data.id_token),
-      scope: data.scope || GOOGLE_SCOPES
+      scope: data.scope || getRequestedScopes()
     }
     if (!tokens.email) tokens.email = await fetchAccountEmail(tokens.access_token)
     storeTokens(tokens)

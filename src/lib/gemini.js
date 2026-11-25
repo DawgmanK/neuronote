@@ -10,7 +10,7 @@
 import { getGeminiApiKey, addUsage } from './storage.js'
 import { GEMINI_EMBEDDING_MODEL, GEMINI_EMBEDDING_DIMENSIONS, MODEL_COSTS } from './models.js'
 import { todayISO } from './actionItems.js'
-import { WRITING_STYLE_RULES, ACTION_ITEM_STYLE_RULES, STUDY_MATERIAL_STYLE_RULES } from './prompt-style.js'
+import { WRITING_STYLE_RULES, ACTION_ITEM_STYLE_RULES, STUDY_MATERIAL_STYLE_RULES, SALES_CALL_RULES } from './prompt-style.js'
 
 // v2.8 — Gemini 4 Hydrogen (GA 2026-11-12, free tier). Was gemini-3.8-flash.
 // Exported here as the single
@@ -147,13 +147,36 @@ const SUMMARY_SCHEMA = {
       required: ['paragraph', 'bullets', 'actions']
     },
     decisions: { type: 'ARRAY', items: { type: 'STRING' } },
-    followups: { type: 'ARRAY', items: { type: 'STRING' } }
+    followups: { type: 'ARRAY', items: { type: 'STRING' } },
+    // v2.9 — only filled in for a sales call report; see SALES_CALL_RULES.
+    sales: {
+      type: 'OBJECT',
+      nullable: true,
+      properties: {
+        outcome: { type: 'STRING', nullable: true },
+        accounts: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              customer: { type: 'STRING' },
+              contact: { type: 'STRING', nullable: true },
+              relationship: { type: 'STRING', nullable: true },
+              notes: { type: 'STRING', nullable: true },
+              nextStep: { type: 'STRING', nullable: true },
+              nextStepDate: { type: 'STRING', nullable: true }
+            },
+            required: ['customer']
+          }
+        }
+      }
+    }
   },
   required: ['summary', 'decisions', 'followups']
 }
 
 // eslint-disable-next-line no-unused-vars -- `model` kept for signature parity with openai.js; Gemini has one model tier.
-export async function generateSummary(transcript, model) {
+export async function generateSummary(transcript, model, options = {}) {
   const today = `${todayISO()} (${new Date().toLocaleDateString('en-US', { weekday: 'long' })})`
   const system = `You are a meeting analyst. Given a transcript, produce a structured JSON summary.
 
@@ -204,7 +227,7 @@ Action item field rules:
 
 ${WRITING_STYLE_RULES}
 
-${ACTION_ITEM_STYLE_RULES}`
+${ACTION_ITEM_STYLE_RULES}${options?.kind === 'sales-call' ? `\n\n${SALES_CALL_RULES}` : ''}`
 
   const content = await generateContent(GEMINI_MODEL, {
     system,

@@ -330,8 +330,10 @@ export default function Home({ notes, onSelectNote, onDeleteNote, onNavigate }) 
                               {preview.slice(0, 220)}
                             </p>
                           )}
-                          {(total > 0 || note.tags?.length > 0) && (
+                          {(total > 0 || note.tags?.length > 0 || note.kind === 'sales-call' || note.handoff) && (
                             <div className="flex flex-wrap gap-1.5 mt-3">
+                              {note.kind === 'sales-call' && <span className="pill">Sales call</span>}
+                              {note.handoff && <span className="pill pill-ok">In Grok folder</span>}
                               {total > 0 && (
                                 open > 0
                                   ? <span className="pill pill-accent">{open} open {open === 1 ? 'action' : 'actions'}</span>

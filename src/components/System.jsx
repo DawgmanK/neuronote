@@ -12,7 +12,9 @@ import { getProviderDisplayName, MODEL_DISPLAY, MODEL_TERRA, MODEL_LUNA, MODEL_S
 import { testOpenAIKey, testGeminiKey, testAssemblyKey } from '../lib/key-test'
 import { useRecordingContext } from '../contexts/RecordingContext'
 import { APP_VERSION } from '../lib/version'
-import { saveClientId, clearClientId, saveClientSecret, SIGNED_IN_MESSAGE } from '../services/google-auth'
+import { saveClientId, clearClientId, saveClientSecret, SIGNED_IN_MESSAGE, setDriveWanted, hasDriveScope } from '../services/google-auth'
+import { saveDocumentToHandoffFolder, getCachedFolder, HANDOFF_FOLDER_NAME } from '../services/google-drive'
+import { isValidEmail } from '../lib/grok-handoff'
 import {
   saveClientId as saveMicrosoftClientId,
   saveTenantId as saveMicrosoftTenantId,
@@ -43,8 +45,21 @@ const EYE_PATHS = {
   closed: <><path d="M2 2l16 16M5.5 5.5A7.5 7.5 0 002 10s3 6 8 6c1.5 0 2.9-.4 4-1M10 7a3 3 0 013 3"/></>
 }
 
-// What a Google OAuth Client ID and an Azure application ID look like.
-const GOOGLE_CLIENT_ID_PATTERN = /^[a-z0-9-]+\.apps\.googleusercontent\.com$/i
+// What a Google OAuth Client ID, a Google client secret and an Azure
+// application ID look like. The Client ID is searched for inside whatever was
+// pasted, so "Client ID: 123-abc.apps.googleusercontent.com" still works.
+// A complete ID is the project number, a dash, a run of letters and digits, and
+// the Google suffix. The middle run is required when the dash is there: a
+// paste such as "1234-.apps.googleusercontent.com" has lost it and is not an ID.
+const GOOGLE_CLIENT_ID_IN_TEXT = /\d+(?:-[a-z0-9_]{8,})?\.apps\.googleusercontent\.com/i
+const GOOGLE_CLIENT_SECRET_PATTERN = /^GOCSPX-/i
+
+/** Whitespace, zero-width characters and wrapping quotes, all removed. */
+function cleanPaste(value) {
+  return (value || '')
+    .replace(/[\s\u200B-\u200D\u2060\uFEFF]+/g, '')
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+}
 const AZURE_CLIENT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const SECTIONS = [
@@ -236,13 +251,15 @@ export default function System({ settings, onUpdateSettings }) {
   const [monthlyUsage, setMonthlyUsage] = useState(0)
   const [dailyUsage, setDailyUsage] = useState([])
   const [googleClientId, setGoogleClientId] = useState('')
-  const [showClientId, setShowClientId] = useState(false)
+  // Client IDs are identifiers, not secrets, so their fields start visible:
+  // a wrong paste should be seen before Save, not hidden behind dots.
+  const [showClientId, setShowClientId] = useState(true)
   // v2.6 — only needed when Google's token endpoint rejects the PKCE exchange
   // for this OAuth client type. Left empty for public clients.
   const [googleClientSecret, setGoogleClientSecret] = useState('')
   const [showClientSecret, setShowClientSecret] = useState(false)
   const [msClientId, setMsClientId] = useState('')
-  const [showMsClientId, setShowMsClientId] = useState(false)
+  const [showMsClientId, setShowMsClientId] = useState(true)
   // Seeded from storage so the field is filled on the very first paint.
   const [msTenantId, setMsTenantId] = useState(() => getMicrosoftTenantId())
   const [corrections, setCorrections] = useState([])
@@ -339,41 +356,101 @@ export default function System({ settings, onUpdateSettings }) {
   }
 
   const saveGoogleCredentials = () => {
-    // Whitespace is stripped throughout, not just at the ends: an ID copied
-    // from a web page or a chat message often arrives with a line break in it.
-    const id = googleClientId.replace(/\s+/g, '')
-    const secret = googleClientSecret.trim()
+    // v2.8.6 — be forgiving about what was pasted. cleanPaste() drops
+    // whitespace, invisible characters and wrapping quotes, all of which ride
+    // along when a value is copied on a phone from a web page or a message.
+    let id = cleanPaste(googleClientId)
+    let secret = cleanPaste(googleClientSecret)
     if (!id && !secret) return
-    // v2.8.5 — a value that is not a Google Client ID used to be saved as-is
-    // and only failed later, on Google's own page, as "Error 401:
-    // invalid_client". Catch the common mix-ups here (the client secret, an
-    // Azure ID, a project number) while the user can still see the field.
-    if (id && !GOOGLE_CLIENT_ID_PATTERN.test(id)) {
-      toast.show({
-        message: 'That doesn\'t look like a Google Client ID. It ends in ".apps.googleusercontent.com" — copy the Client ID, not the client secret, from Google Cloud Console → Credentials.',
-        type: 'error',
-        duration: 10000
-      })
-      return
+
+    // The two values are easy to put in each other's fields, above all on a
+    // phone. Sort them out instead of refusing: a Client ID is found wherever
+    // it sits in the paste, and a client secret pasted into the Client ID
+    // field is saved as the secret.
+    let movedSecret = false
+    if (id) {
+      const found = id.match(GOOGLE_CLIENT_ID_IN_TEXT)
+      if (found) {
+        id = found[0]
+      } else if (GOOGLE_CLIENT_SECRET_PATTERN.test(id) && !secret) {
+        secret = id
+        id = ''
+        movedSecret = true
+      } else if (/googleusercontent\.com/i.test(id)) {
+        // The right kind of value, but incomplete: the part between the dash
+        // and ".apps.googleusercontent.com" did not come along with the copy.
+        toast.show({
+          message: 'That Client ID is cut off: the letters and digits between the dash and ".apps.googleusercontent.com" are missing. In Google Cloud Console, use the copy button next to Client ID so the whole value comes across.',
+          type: 'error',
+          duration: 12000
+        })
+        return
+      } else {
+        // v2.8.5 — anything else used to be saved as-is and only failed
+        // later, on Google's own page, as "Error 401: invalid_client".
+        toast.show({
+          message: 'That isn\'t a Google Client ID. The Client ID is the long value ending in ".apps.googleusercontent.com", from Google Cloud Console → Credentials → your OAuth client.',
+          type: 'error',
+          duration: 10000
+        })
+        return
+      }
     }
+    // The same mix-up the other way round.
+    if (secret && GOOGLE_CLIENT_ID_IN_TEXT.test(secret) && !id) {
+      id = secret.match(GOOGLE_CLIENT_ID_IN_TEXT)[0]
+      secret = ''
+    }
+
     // Saving a new Client ID invalidates the stored tokens, so do it first.
     if (id) saveClientId(id)
     if (secret) saveClientSecret(secret)
     setGoogleClientId('')
     setGoogleClientSecret('')
     google.refresh()
+
+    const haveId = !!(id || google.clientId)
+    const haveSecret = !!(secret || google.hasClientSecret)
+    if (movedSecret) {
+      toast.show({
+        message: haveId
+          ? 'That was the client secret, so it is saved as the secret. Sign in to connect.'
+          : 'That was the client secret (it starts with GOCSPX-), so it is saved as the secret. Now paste the Client ID: the long value ending in ".apps.googleusercontent.com".',
+        type: 'info',
+        duration: 12000
+      })
+      return
+    }
     toast.show({
-      message: id ? 'Google Client ID saved. Sign in to connect.' : 'Google client secret saved. Sign in to connect.',
-      type: 'success'
+      message: haveId && haveSecret
+        ? 'Google credentials saved. Sign in to connect.'
+        : haveId
+          ? 'Google Client ID saved. Add the client secret too, then sign in.'
+          : 'Client secret saved. Now paste the Client ID: the long value ending in ".apps.googleusercontent.com".',
+      type: 'success',
+      duration: 8000
     })
   }
 
-  const clearGoogleCredentials = () => {
+  const clearGoogleCredentials = async () => {
+    // clearClientId() removes the client secret as well and signs out. That
+    // used to happen without a word, so re-pasting only the Client ID left a
+    // sign-in that opened Google and then failed.
+    const choice = await ask({
+      title: 'Remove Google credentials?',
+      message: 'This removes the Client ID and the client secret, and signs you out of Google. You will need to paste both again to reconnect.',
+      options: [
+        { label: 'Keep them', value: 'keep', primary: true },
+        { label: 'Remove both', value: 'remove', tone: 'danger' }
+      ],
+      dismissValue: 'keep'
+    })
+    if (choice !== 'remove') return
     clearClientId()
     setGoogleClientId('')
     setGoogleClientSecret('')
     google.refresh()
-    toast.show({ message: 'Google Client ID cleared.', type: 'info' })
+    toast.show({ message: 'Google Client ID and client secret removed.', type: 'info' })
   }
 
   const handleGoogleSignIn = async () => {
@@ -386,6 +463,81 @@ export default function System({ settings, onUpdateSettings }) {
     }
   }
 
+  // --- Grok handoff folder (v2.9) -----------------------------------------
+  const [handoffFolder, setHandoffFolder] = useState(() => getCachedFolder())
+  const [sendingTest, setSendingTest] = useState(false)
+  const [handoffEmailDraft, setHandoffEmailDraft] = useState('')
+
+  // The address lives in settings, in this browser only. It is never written
+  // into the code: the repository is public.
+  const saveHandoffEmail = () => {
+    const address = handoffEmailDraft.trim()
+    if (!address) return
+    if (!isValidEmail(address)) {
+      toast.show({ message: 'That doesn\'t look like an email address. Check it and try again.', type: 'error', duration: 7000 })
+      return
+    }
+    onUpdateSettings({ ...settings, handoffEmail: address })
+    setHandoffEmailDraft('')
+    toast.show({ message: `Call reports can now be emailed to ${address}.`, type: 'success', duration: 6000 })
+  }
+
+  const removeHandoffEmail = () => {
+    const next = { ...settings }
+    delete next.handoffEmail
+    onUpdateSettings(next)
+    toast.show({ message: 'Email address removed.', type: 'info' })
+  }
+
+  const toggleGrokHandoff = (on) => {
+    // Turning it on is what makes the next Google sign-in ask for Drive.
+    if (on) setDriveWanted(true)
+    onUpdateSettings({ ...settings, grokHandoff: on })
+  }
+
+  // Nothing is awaited before google.signIn(): the consent popup has to open
+  // inside the tap, or the browser blocks it.
+  const handleAllowDrive = async () => {
+    setDriveWanted(true)
+    try {
+      await google.signIn()
+      if (hasDriveScope()) {
+        toast.show({ message: 'Google Drive is connected. Sales calls can now go to your Grok folder.', type: 'success', duration: 7000 })
+      } else {
+        toast.show({
+          message: 'Signed in, but Google Drive access was not granted. Try again and leave the Google Drive box ticked on Google\'s screen.',
+          type: 'error',
+          duration: 10000
+        })
+      }
+    } catch (err) {
+      console.error('[NeuroNote:Handoff] Drive consent failed:', err)
+      toast.show({ message: `Google sign-in failed: ${err.message}`, type: 'error', duration: 9000 })
+    }
+  }
+
+  const sendTestDocument = async () => {
+    if (sendingTest) return
+    setSendingTest(true)
+    try {
+      const now = new Date()
+      const result = await saveDocumentToHandoffFolder({
+        name: `Test from NeuroNote — ${now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+        html: '<html><body><h1>Test from NeuroNote</h1><p>If your assistant can read this, the handoff folder is working. '
+          + 'Sales call reports recorded on the Sales call tab will be saved here as documents like this one.</p>'
+          + `<p><b>Created:</b> ${now.toISOString()}</p></body></html>`
+      })
+      setHandoffFolder(getCachedFolder())
+      if (result.success) {
+        toast.show({ message: 'Test document saved to your Grok folder.', type: 'success', duration: 7000, link: result.link, linkLabel: 'Open' })
+      } else {
+        toast.show({ message: result.error, type: 'error', duration: 14000 })
+      }
+    } finally {
+      setSendingTest(false)
+    }
+  }
+
   const handleGoogleSignOut = () => {
     google.signOut()
     toast.show({ message: 'Signed out of Google.', type: 'info' })
@@ -394,7 +546,7 @@ export default function System({ settings, onUpdateSettings }) {
   // --- Microsoft 365 (v2.5) ------------------------------------------------
   const saveMicrosoftIds = () => {
     const tenant = msTenantId.trim() || DEFAULT_TENANT_ID
-    const typedId = msClientId.replace(/\s+/g, '')
+    const typedId = cleanPaste(msClientId)
     if (!typedId && !microsoft.clientId) return
     if (typedId && !AZURE_CLIENT_ID_PATTERN.test(typedId)) {
       toast.show({
@@ -732,6 +884,7 @@ export default function System({ settings, onUpdateSettings }) {
 
         {/* ------------------------------------------------------ CALENDAR */}
         {section === 'calendar' && (
+          <>
           <GlassCard hoverable={false}>
             <h2 className="section-label mb-1">Calendar and tasks</h2>
             <p className="text-xs text-muted leading-relaxed mb-3">
@@ -777,10 +930,10 @@ export default function System({ settings, onUpdateSettings }) {
                 <SecretField
                   id="google-client-secret"
                   label="Client secret"
-                  hint="(only if Google asks for one)"
+                  hint="(Google asks for it with most clients)"
                   value={googleClientSecret}
                   onChange={setGoogleClientSecret}
-                  placeholder={google.hasClientSecret ? 'Saved' : 'Usually left empty'}
+                  placeholder={google.hasClientSecret ? 'Saved — paste a new one to replace it' : 'GOCSPX-…'}
                   shown={showClientSecret}
                   onToggleShown={() => setShowClientSecret(!showClientSecret)}
                 />
@@ -789,6 +942,20 @@ export default function System({ settings, onUpdateSettings }) {
                   <GhostButton onClick={saveGoogleCredentials} disabled={!googleClientId.trim() && !googleClientSecret.trim()}>Save</GhostButton>
                   {google.clientId && <GhostButton danger onClick={clearGoogleCredentials}>Remove</GhostButton>}
                 </div>
+
+                {/* v2.8.6 — without the secret the Google window opens and
+                    closes normally and the sign-in then fails. Warn before
+                    that, not after. */}
+                {google.clientId && !google.hasClientSecret && !google.signedIn && (
+                  <div className="rounded-xl border border-rec/40 bg-rec/[0.07] px-3 py-2.5 mb-4">
+                    <p className="text-[13px] font-semibold text-rec mb-0.5">No client secret saved</p>
+                    <p className="text-xs text-muted leading-relaxed">
+                      Google asks for the client secret with a &quot;Web application&quot; OAuth client. Without it,
+                      sign-in fails just after the Google window closes. Copy it from Google Cloud Console &rarr;
+                      Credentials &rarr; your OAuth client, paste it above, and press Save.
+                    </p>
+                  </div>
+                )}
 
                 {google.signedIn ? (
                   <div className="flex items-center justify-between gap-3 mb-3">
@@ -822,8 +989,8 @@ export default function System({ settings, onUpdateSettings }) {
                     consent screen needs the calendar.events, tasks, userinfo.email and openid scopes.
                   </p>
                   <p>
-                    Leave the client secret blank unless sign-in reports that Google requires one. If a sign-in completes
-                    without staying connected, remove NeuroNote at{' '}
+                    Copy the client secret from the same page too: Google asks for it with a &quot;Web application&quot;
+                    client. If a sign-in completes without staying connected, remove NeuroNote at{' '}
                     <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer"
                       className="text-accent hover:underline">myaccount.google.com/permissions</a>{' '}
                     and sign in once more — Google only grants long-lived access on a fresh consent.
@@ -896,6 +1063,109 @@ export default function System({ settings, onUpdateSettings }) {
               </div>
             )}
           </GlassCard>
+
+          {/* GROK HANDOFF (v2.9) */}
+          <GlassCard hoverable={false}>
+            <h2 className="section-label mb-1">Grok handoff</h2>
+            <p className="text-xs text-muted leading-relaxed mb-4">
+              Saves each sales call report as a Google Doc in a Drive folder named &quot;{HANDOFF_FOLDER_NAME}&quot;.
+              Grok, or any assistant connected to your Google Drive, can read it from there. NeuroNote can only
+              see the files it puts in that folder, never the rest of your Drive.
+            </p>
+
+            <ToggleRow
+              title="Send sales calls to the folder"
+              description="Applies to anything recorded on the Sales call tab. Other notes have a Send to Grok button."
+              enabled={settings?.grokHandoff}
+              onChange={toggleGrokHandoff}
+            />
+
+            {settings?.grokHandoff && (
+              <div className="border-t border-white/10 mt-4 pt-4 space-y-3">
+                {!google.clientId || !google.signedIn ? (
+                  <StatusRow tone="warn">
+                    This uses your Google sign-in. Choose Google (or Both) above, save your Client ID and secret, and sign in first.
+                  </StatusRow>
+                ) : !google.hasDrive ? (
+                  <>
+                    <StatusRow tone="warn">
+                      You are signed in to Google, but NeuroNote has not been given permission to save to Google Drive yet.
+                    </StatusRow>
+                    <PrimaryButton onClick={handleAllowDrive} disabled={google.signingIn}>
+                      {google.signingIn ? 'Connecting…' : 'Allow Google Drive'}
+                    </PrimaryButton>
+                  </>
+                ) : (
+                  <>
+                    <StatusRow tone="ok">Google Drive is connected{google.email ? ` as ${google.email}` : ''}.</StatusRow>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <GhostButton onClick={sendTestDocument} disabled={sendingTest}>
+                        {sendingTest ? 'Sending…' : 'Send a test document'}
+                      </GhostButton>
+                      {handoffFolder?.link && (
+                        <a href={handoffFolder.link} target="_blank" rel="noopener noreferrer"
+                          className="tap-target inline-flex items-center px-2 text-[13px] font-medium text-accent hover:underline">
+                          Open the folder ↗
+                        </a>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* v2.9 — the no-setup route: a mail draft instead of a Drive upload. */}
+            <div className="border-t border-white/10 mt-4 pt-4">
+              <label className="block text-[13px] font-medium text-ink mb-1.5" htmlFor="handoff-email">
+                Or email call reports to
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="handoff-email"
+                  type="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={handoffEmailDraft}
+                  onChange={e => setHandoffEmailDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveHandoffEmail()}
+                  placeholder={settings?.handoffEmail ? 'Type a new address to replace it' : 'name@example.com'}
+                  className="glass-input flex-1 min-w-0 px-4 py-3 text-sm outline-none"
+                />
+                <GhostButton onClick={saveHandoffEmail} disabled={!handoffEmailDraft.trim()}>Save</GhostButton>
+              </div>
+              {settings?.handoffEmail && (
+                <p className="text-xs text-muted mt-1.5 break-all">
+                  Saved: <span className="text-ink/80">{settings.handoffEmail}</span>{' '}
+                  <button onClick={removeHandoffEmail} className="text-muted hover:text-rec underline underline-offset-2 transition-colors">
+                    Remove
+                  </button>
+                </p>
+              )}
+              <p className="text-xs text-muted leading-relaxed mt-2">
+                NeuroNote can&apos;t send email by itself. Each note gets an &quot;Email to Grok&quot; button that opens
+                your mail app with the report filled in, and you press Send. It needs no Google setup.
+              </p>
+            </div>
+
+            <HowTo title="How to set up the Drive folder">
+              <ol className="list-decimal pl-4 space-y-1">
+                <li>
+                  In Google Cloud Console, in the same project as your sign-in client, open APIs &amp; Services &rarr;
+                  Library, find &quot;Google Drive API&quot; and press Enable.
+                </li>
+                <li>Switch this on, press &quot;Allow Google Drive&quot;, and approve it on Google&apos;s screen.</li>
+                <li>Press &quot;Send a test document&quot; and check it appears in the folder.</li>
+                <li>
+                  In Grok, connect Google Drive, then ask it (or schedule it) to check the
+                  &quot;{HANDOFF_FOLDER_NAME}&quot; folder and log each new document.
+                </li>
+              </ol>
+            </HowTo>
+          </GlassCard>
+          </>
         )}
 
         {/* --------------------------------------------------------- ABOUT */}

@@ -69,10 +69,10 @@ async function withStatusTracking(provider, fnName, usesLocalFallback, fn) {
   }
 }
 
-export async function generateSummary(transcript, model) {
+export async function generateSummary(transcript, model, options = {}) {
   const provider = getAIProvider()
-  console.log(`${LOG} generateSummary via ${provider}`)
-  return withStatusTracking(provider, 'generateSummary', true, () => backend().generateSummary(transcript, model))
+  console.log(`${LOG} generateSummary via ${provider}${options?.kind ? ` (${options.kind})` : ''}`)
+  return withStatusTracking(provider, 'generateSummary', true, () => backend().generateSummary(transcript, model, options))
 }
 
 export async function generateFlashcards(transcript) {

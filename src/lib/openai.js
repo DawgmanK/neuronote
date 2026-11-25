@@ -1,7 +1,7 @@
 import { getApiKey, addUsage } from './storage.js'
 import { EMBEDDING_MODEL, MODEL_COSTS } from './models.js'
 import { todayISO } from './actionItems.js'
-import { WRITING_STYLE_RULES, ACTION_ITEM_STYLE_RULES, STUDY_MATERIAL_STYLE_RULES } from './prompt-style.js'
+import { WRITING_STYLE_RULES, ACTION_ITEM_STYLE_RULES, STUDY_MATERIAL_STYLE_RULES, SALES_CALL_RULES } from './prompt-style.js'
 
 // v2.8 — GPT-6 family (was GPT-5.6 in v2.7.1). This is the single place to change a tier's model id.
 export const OPENAI_MODELS = {
@@ -81,7 +81,7 @@ function parseJSON(text) {
   }
 }
 
-export async function generateSummary(transcript, model) {
+export async function generateSummary(transcript, model, options = {}) {
   const today = `${todayISO()} (${new Date().toLocaleDateString('en-US', { weekday: 'long' })})`
   const content = await chatCompletion(model, [
     {
@@ -135,7 +135,7 @@ Action item field rules:
 
 ${WRITING_STYLE_RULES}
 
-${ACTION_ITEM_STYLE_RULES}`
+${ACTION_ITEM_STYLE_RULES}${options?.kind === 'sales-call' ? `\n\n${SALES_CALL_RULES}` : ''}`
     },
     { role: 'user', content: `Summarize this meeting transcript:\n\n${transcript}` }
   ], 16000)

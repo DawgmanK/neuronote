@@ -29,11 +29,12 @@ function describeFailure(message) {
 /**
  * @param {string} text      the transcript (or other text) to summarize
  * @param {object} settings  app settings, for the model tier
+ * @param {object} [options]  { kind: 'sales-call' } asks for the sales call report fields
  * @returns {Promise<{data: object, source: 'ai'|'local', reason: string|null, model: string|null}>}
  *   `reason` is 'no-key' when no AI key is saved, a short description when the
  *   AI call failed, and null when the AI summary succeeded. Never rejects.
  */
-export async function summarizeTranscript(text, settings) {
+export async function summarizeTranscript(text, settings, options = {}) {
   if (!hasActiveApiKey()) {
     console.log(`${LOG} No AI key saved — using the on-device summary`)
     return { data: extractSummary(text), source: 'local', reason: 'no-key', model: null }
@@ -42,7 +43,7 @@ export async function summarizeTranscript(text, settings) {
   const modelName = getProviderDisplayName(getAIProvider(), settings)
   try {
     console.log(`${LOG} Asking ${modelName} to summarize ${text.length} chars`)
-    const data = await generateSummary(text, getActiveModel(settings))
+    const data = await generateSummary(text, getActiveModel(settings), options)
     if (!data?.summary || typeof data.summary.paragraph !== 'string' || !data.summary.paragraph.trim()) {
       throw new Error('The AI reply was empty or not in the expected format')
     }
@@ -60,6 +61,8 @@ export function summaryFields(result) {
     summary: data.summary || { paragraph: '', bullets: [], actions: [] },
     decisions: data.decisions || [],
     followups: data.followups || [],
+    // Present only on a sales call report the AI wrote.
+    ...(data.sales && typeof data.sales === 'object' ? { sales: data.sales } : {}),
     summarySource: result?.source || 'local',
     summaryModel: result?.model || null,
     summaryReason: result?.reason || null

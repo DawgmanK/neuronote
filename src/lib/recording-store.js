@@ -57,6 +57,9 @@ export async function saveInProgress(sessionId, chunks, meta = {}) {
     diarization: meta.diarization !== false,
     segmentCount: meta.segmentCount || 0,
     mimeType: meta.mimeType || 'audio/webm',
+    // v2.9 — 'sales-call' or 'meeting', so a recovered recording is
+    // summarized and sent the way it would have been.
+    kind: meta.kind || 'meeting',
     savedAt: Date.now(),
     chunks
   }

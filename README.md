@@ -12,6 +12,7 @@ An AI-powered meeting note-taking app for sales professionals, consultants, and 
 - 🔄 Auto-refreshing sign-in — connect once, stay connected
 - 💬 Ask NeuroNote — one bar on the home screen searches your meetings and answers questions across all of them
 - 🔁 Every note says whether AI wrote its summary, and can redo it in one tap
+- 🤝 Sales call tab — dictate a call report after a visit and it is saved as a Google Doc in a Drive folder that Grok (or any assistant connected to your Drive) can read and log
 - 🖼️ Photo capture with OCR for whiteboards/documents
 - 🎯 Tap-to-correct with persistent learning dictionary
 - 🥷 Discreet Mode — screensaver-style UI for sensitive recordings

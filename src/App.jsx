@@ -24,6 +24,7 @@ import {
   signIn as googleSignIn
 } from './services/google-auth'
 import useEmbeddings from './hooks/useEmbeddings'
+import { sendNoteToHandoff, isSalesCall, buildMailtoLink } from './lib/grok-handoff'
 
 /**
  * v2.5.1 — drain the Microsoft sign-in redirect before the app paints.
@@ -266,6 +267,67 @@ function AppShell({ msRedirect }) {
     setSelectedNote(note)
     if (hasActiveApiKey()) {
       indexNewNote(note).catch(console.error)
+    }
+
+    // v2.9 — a sales call report goes straight to the Google Drive handoff
+    // folder when that is switched on. The note is already saved and open, so
+    // a failure here costs nothing: it says why, and the note keeps a
+    // "Send to Grok" button.
+    // The email route cannot fire by itself: a browser only opens the mail
+    // app from a tap. So the finished report offers one, in a toast that
+    // stays up long enough to reach for.
+    const emailTo = getSettings().handoffEmail
+    if (isSalesCall(note) && emailTo) {
+      const mailto = buildMailtoLink(emailTo, note)
+      if (mailto) {
+        toastRef.current.show({
+          message: 'Call report ready. Email it to Grok?',
+          type: 'info',
+          duration: 20000,
+          actionLabel: 'Email to Grok',
+          onAction: () => {
+            const stamp = (n) => (n && n.id === note.id
+              ? { ...n, handoffEmail: { openedAt: new Date().toISOString(), to: emailTo } }
+              : n)
+            setNotes(prev => {
+              const updated = prev.map(stamp)
+              saveNotes(updated)
+              return updated
+            })
+            setSelectedNote(stamp)
+            window.location.href = mailto
+          }
+        })
+      }
+    }
+
+    if (isSalesCall(note) && getSettings().grokHandoff) {
+      sendNoteToHandoff(note).then(result => {
+        if (!result.ok) {
+          toastRef.current.show({
+            message: `The call report is saved here, but it didn't reach your Grok folder: ${result.error}`,
+            type: 'error',
+            duration: 14000,
+            actionLabel: 'Open Settings',
+            onAction: () => { setSelectedNote(null); setActiveTab('system') }
+          })
+          return
+        }
+        const attach = (n) => (n && n.id === note.id ? { ...n, handoff: result.handoff } : n)
+        setNotes(prev => {
+          const updated = prev.map(attach)
+          saveNotes(updated)
+          return updated
+        })
+        setSelectedNote(attach)
+        toastRef.current.show({
+          message: 'Call report saved to your Grok folder in Google Drive.',
+          type: 'success',
+          duration: 7000,
+          link: result.handoff.link,
+          linkLabel: 'Open'
+        })
+      }).catch(err => console.error('[NeuroNote:Handoff] Auto-send threw:', err))
     }
   }, [indexNewNote])
 

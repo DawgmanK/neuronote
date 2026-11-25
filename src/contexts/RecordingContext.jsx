@@ -129,6 +129,8 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
   const startTimeRef = useRef(null)
   const stateRef = useRef('idle')
   const diarizationRef = useRef(diarization)
+  // v2.9 — what the current recording is: 'meeting' or 'sales-call'.
+  const kindRef = useRef('meeting')
   const photosRef = useRef([])
   const settingsRef = useRef(settings)
   const onSaveNoteRef = useRef(onSaveNote)
@@ -293,7 +295,8 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
       elapsedSeconds: elapsedRef.current,
       diarization: diarizationRef.current,
       segmentCount: segmentsRef.current.length,
-      mimeType: mimeTypeRef.current
+      mimeType: mimeTypeRef.current,
+      kind: kindRef.current
     })
   }, [])
 
@@ -390,7 +393,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
     autosaveRef.current = setInterval(() => { autosave() }, AUTOSAVE_SECONDS * 1000)
   }, [clearTimers, cutSegment, autosave])
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (options) => {
     if (stateRef.current === 'recording' || stateRef.current === 'paused') {
       console.warn(`${LOG} startRecording() ignored — already ${stateRef.current}`)
       return false
@@ -400,7 +403,10 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
       return false
     }
 
-    console.log(`${LOG} startRecording() requested`)
+    // Called from a click handler in places, so anything that is not an
+    // options object (a click event, say) simply means an ordinary meeting.
+    kindRef.current = options?.kind === 'sales-call' ? 'sales-call' : 'meeting'
+    console.log(`${LOG} startRecording() requested (${kindRef.current})`)
     // Start from a guaranteed-clean slate. If a previous session died badly and
     // left a recorder holding the mic, this is what frees it.
     await hardReset('before-start')
@@ -515,7 +521,8 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
   // ---------------------------------------------------------------------------
   // Turning a transcript into a saved note
   // ---------------------------------------------------------------------------
-  const buildAndSaveNote = useCallback(async ({ transcriptText, speakers, duration, capturedPhotos, type, transcriptSource }) => {
+  const buildAndSaveNote = useCallback(async ({ transcriptText, speakers, duration, capturedPhotos, type, transcriptSource, kind }) => {
+    const isSalesCall = kind === 'sales-call'
     let text = transcriptText
 
     // Photo OCR — same flow as v2.2, just running from the provider so photos
@@ -536,11 +543,12 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
     // v2.8.2 — summarizeTranscript never throws: it reports whether the AI
     // wrote the summary or the on-device stand-in did, and why.
     setProcessingStep('Writing the summary...')
-    const summaryResult = await summarizeTranscript(text, settingsRef.current)
+    const summaryResult = await summarizeTranscript(text, settingsRef.current, isSalesCall ? { kind } : {})
 
     try {
-      setProcessingStep('Generating flashcards...')
-      if (hasActiveApiKey()) {
+      // A call report is a log entry, not study material: no cards for it.
+      if (hasActiveApiKey() && !isSalesCall) {
+        setProcessingStep('Generating flashcards...')
         console.log('[NeuroNote] Calling generateFlashcards...')
         flashcardData = await generateFlashcards(text)
         console.log('[NeuroNote] Flashcards result:', flashcardData?.flashcards?.length, 'cards,', flashcardData?.quiz?.length, 'quiz items')
@@ -573,6 +581,7 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
       photos: capturedPhotos || [],
       speakers,
       tags: [],
+      kind: isSalesCall ? 'sales-call' : 'meeting',
       type: type || 'recording'
     }
 
@@ -674,7 +683,8 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
         duration,
         capturedPhotos,
         type: 'recording',
-        transcriptSource
+        transcriptSource,
+        kind: kindRef.current
       })
       // v2.8.3 — when AssemblyAI was meant to transcribe this and could not,
       // the note holds only the rough browser transcript. The audio is the one
@@ -860,7 +870,8 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
         duration: record.elapsedSeconds,
         capturedPhotos: [],
         type: 'recording',
-        transcriptSource: 'assemblyai'
+        transcriptSource: 'assemblyai',
+        kind: record.kind
       })
       toast.update(progressToast, { message: 'Recovered. Opening your note…', type: 'success', duration: 2500 })
       await clearInProgress(record.sessionId)
