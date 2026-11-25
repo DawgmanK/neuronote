@@ -44,7 +44,11 @@ export default function AskNeuroNote({ onClose, notes, initialQuestion = '', onO
         return
       }
 
-      const embeddings = getEmbeddings()
+      // Only meetings that still exist. Deleting a note leaves its index
+      // behind until the next launch (so Undo can bring it back whole), and
+      // those passages must not be retrieved or quoted in the meantime.
+      const liveIds = new Set(notes.map(n => n.id))
+      const embeddings = getEmbeddings().filter(entry => liveIds.has(entry.noteId))
       if (embeddings.length === 0) {
         setMessages(prev => [...prev, {
           role: 'assistant',

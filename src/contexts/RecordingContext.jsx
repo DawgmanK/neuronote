@@ -676,10 +676,24 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
         type: 'recording',
         transcriptSource
       })
-      toast.update(progressToast, { message: 'Done. Opening your note…', type: 'success', duration: 2500 })
-      // The recording is safely inside a note now, so the crash-recovery copy
-      // has done its job.
-      await clearInProgress(sessionId)
+      // v2.8.3 — when AssemblyAI was meant to transcribe this and could not,
+      // the note holds only the rough browser transcript. The audio is the one
+      // thing that can still produce a proper one, so it is kept and offered
+      // back on the next launch instead of being deleted.
+      const transcriptionFailed = wasChunked && transcriptSource !== 'assemblyai'
+      if (transcriptionFailed) {
+        console.warn(`${LOG} AssemblyAI transcription failed — keeping the audio in IndexedDB for recovery`)
+        toast.update(progressToast, {
+          message: 'AssemblyAI couldn\'t transcribe this one, so the note uses the rough browser transcript. The audio is kept: you\'ll be offered it again next time you open NeuroNote.',
+          type: 'error',
+          duration: 12000
+        })
+      } else {
+        toast.update(progressToast, { message: 'Done. Opening your note…', type: 'success', duration: 2500 })
+        // The recording is safely inside a note now, so the crash-recovery
+        // copy has done its job.
+        await clearInProgress(sessionId)
+      }
     } catch (e) {
       console.error(`${LOG} Could not build the note:`, e)
       toast.update(progressToast, {
@@ -809,19 +823,32 @@ export function RecordingProvider({ settings, onSaveNote, onNavigate, children }
     const progressToast = toast.show({ message: 'Transcribing recovered recording...', type: 'progress', duration: 0 })
     onNavigateRef.current?.('capture')
 
+    // v2.8.3 — a recovery that cannot be transcribed stops here with the audio
+    // untouched. It used to save a note containing only the error sentence and
+    // then delete the recording, which was the one thing worth keeping.
+    const keepForLater = (message) => {
+      console.warn(`${LOG} Recovery not completed — the recording stays in IndexedDB: ${message}`)
+      toast.update(progressToast, { message, type: 'error', duration: 12000 })
+      setProcessingStep('')
+      setState('idle')
+      return null
+    }
+
     let transcriptText = ''
     let speakers = 1
+    if (!(getApiKey('assemblyai') && settingsRef.current?.useAssemblyAI)) {
+      return keepForLater('Recovering a recording needs AssemblyAI. Add a key under Settings → Transcripts; the recording is kept and will be offered again next time you open NeuroNote.')
+    }
     try {
-      if (getApiKey('assemblyai') && settingsRef.current?.useAssemblyAI) {
-        const result = await transcribeAudio(blob, { speakerLabels: record.diarization !== false })
-        transcriptText = result.text
-        speakers = result.speakers
-      } else {
-        transcriptText = 'Recovered audio could not be transcribed: AssemblyAI is not configured.'
-      }
+      const result = await transcribeAudio(blob, { speakerLabels: record.diarization !== false })
+      transcriptText = result.text
+      speakers = result.speakers
     } catch (e) {
       console.error(`${LOG} Recovery transcription failed:`, e)
-      transcriptText = `Recovered audio could not be transcribed: ${e.message}`
+      return keepForLater(`The recording couldn't be transcribed (${e.message}). It is kept and will be offered again next time you open NeuroNote.`)
+    }
+    if (!transcriptText || !transcriptText.trim()) {
+      return keepForLater('No speech was found in the recovered recording. It is kept in case you want to try again, or you can discard it from the prompt next time.')
     }
 
     let note = null

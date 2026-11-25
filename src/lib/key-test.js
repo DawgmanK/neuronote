@@ -39,6 +39,16 @@ export async function testOpenAIKey(key) {
     console.error(`${LOG} OpenAI unreachable:`, err)
     return unreachable('OpenAI')
   }
+  // 403 is not a bad key: a restricted key that may write completions but not
+  // list models lands here, as does an account without access to this
+  // endpoint. Say it could not be checked rather than that it was rejected.
+  if (res.status === 403) {
+    return {
+      ok: true,
+      warning: true,
+      message: 'Couldn\'t confirm this key: OpenAI wouldn\'t let it list models (403). If it is a restricted key, summaries may still work. Record a short test to find out.'
+    }
+  }
   if (!res.ok) return rejected('OpenAI', res.status)
 
   let available = []

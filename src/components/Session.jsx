@@ -12,7 +12,7 @@ import { addedLabel } from '../services/action-sync'
 import { normalizeActionItem } from '../lib/actionItems'
 import { replacePreservingCase } from '../lib/corrections'
 import { summarizeTranscript, summaryFields, titleFromSummary } from '../lib/summarize'
-import { hasActiveApiKey } from '../lib/ai-provider'
+import { hasActiveApiKey, generateFlashcards } from '../lib/ai-provider'
 import { getSettings } from '../lib/storage'
 import { useRecordingContext } from '../contexts/RecordingContext'
 
@@ -36,7 +36,7 @@ function formatDue(dueDate, dueTime) {
   return `${day} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 }
 
-export default function Session({ note, onUpdateNote, onOpenSettings }) {
+export default function Session({ note, onUpdateNote, onOpenSettings, onReindexNote }) {
   const [activeSubTab, setActiveSubTab] = useState('summary')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
@@ -153,7 +153,7 @@ export default function Session({ note, onUpdateNote, onOpenSettings }) {
         return match ? { ...item, done: match.done, sync: match.sync } : item
       })
       const latest = noteRef.current
-      const updated = {
+      let updated = {
         ...latest,
         ...fields,
         summary: { ...fields.summary, actions },
@@ -162,6 +162,22 @@ export default function Session({ note, onUpdateNote, onOpenSettings }) {
       noteRef.current = updated
       onUpdateNote(updated)
       toast.show({ message: `Summary rewritten by ${result.model}.`, type: 'success' })
+
+      // A note first made without AI has no study cards either. Fill them in
+      // now; cards that already exist are left alone.
+      if (!(updated.flashcards?.length) && !(updated.quiz?.length)) {
+        try {
+          const cards = await generateFlashcards(updated.transcript || '')
+          updated = { ...noteRef.current, flashcards: cards?.flashcards || [], quiz: cards?.quiz || [] }
+          noteRef.current = updated
+          onUpdateNote(updated)
+        } catch (e) {
+          console.error('[NeuroNote] Study cards could not be generated after the redo:', e)
+        }
+      }
+
+      // Ask searches the note's indexed text, which included the old summary.
+      onReindexNote?.(noteRef.current)
     } finally {
       setResummarizing(false)
     }

@@ -50,6 +50,10 @@ async function chatCompletion(model, messages, maxTokens = 4096) {
   if (finishReason === 'length') {
     console.warn('[NeuroNote] WARNING: Response was truncated (finish_reason=length). Increase max_completion_tokens.')
   }
+  // Usage is recorded first: an empty reply is still billed.
+  const cost = (MODEL_COSTS[model] || 0.003) * ((data.usage?.total_tokens || 1000) / 1000)
+  addUsage(cost, model)
+
   // v2.8.2 — a reasoning model can use its whole output budget thinking and
   // return nothing. Say so, instead of handing an empty string to the parser.
   if (!content || !content.trim()) {
@@ -57,9 +61,6 @@ async function chatCompletion(model, messages, maxTokens = 4096) {
       ? 'The AI reply was empty: the model ran out of output budget before answering'
       : 'The AI reply was empty')
   }
-
-  const cost = (MODEL_COSTS[model] || 0.003) * ((data.usage?.total_tokens || 1000) / 1000)
-  addUsage(cost, model)
   return content
 }
 

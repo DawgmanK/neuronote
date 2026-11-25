@@ -13,6 +13,27 @@ import { transcribeAudio } from '../lib/assemblyai'
 import { applyCorrections } from '../lib/corrections'
 import { generateFlashcards, extractImageText, hasActiveApiKey } from '../lib/ai-provider'
 import { summarizeTranscript, summaryFields, titleFromSummary } from '../lib/summarize'
+import { useToast } from './ui/Toast'
+
+// v2.8.3 — what an uploaded file is, judged by its type AND its name.
+// Browsers report .mp4 and .webm as video/* even when they hold only audio
+// (NeuroNote's own recordings are .webm), and some files arrive with no type
+// at all. Anything that is not recognisably a recording, a picture or text is
+// refused: it used to be decoded as text, which turned a video or a PDF into
+// megabytes of garbage that was then sent off to be summarized.
+const RECORDING_EXT = /\.(mp3|m4a|mp4|wav|webm|ogg|oga|aac|flac|mov)$/i
+const RECORDING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg']
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif)$/i
+const TEXT_EXT = /\.(txt|md|markdown|csv|vtt|srt)$/i
+
+function classifyUpload(file) {
+  const type = (file.type || '').toLowerCase()
+  const name = file.name || ''
+  if (type.startsWith('audio/') || RECORDING_VIDEO_TYPES.includes(type) || RECORDING_EXT.test(name)) return 'recording'
+  if (type.startsWith('image/') || IMAGE_EXT.test(name)) return 'image'
+  if (type.startsWith('text/') || TEXT_EXT.test(name)) return 'text'
+  return null
+}
 
 /** Set once the v2.4 legal notice has been acknowledged. */
 const DISCLAIMER_KEY = 'discreet-disclaimer-acknowledged'
@@ -58,6 +79,7 @@ export default function Capture({ onSaveNote, settings }) {
   } = useRecordingContext()
 
   const [mode, setMode] = useState('record')
+  const toast = useToast()
   const [showCamera, setShowCamera] = useState(false)
   const [uploadProcessing, setUploadProcessing] = useState(false)
   const [uploadStep, setUploadStep] = useState('')
@@ -149,43 +171,72 @@ export default function Capture({ onSaveNote, settings }) {
   const handleFileUpload = async (files) => {
     if (!files?.length) return
     const file = files[0]
+
+    // A refused or failed upload says why and saves nothing. It used to save a
+    // note whose "transcript" was the error message.
+    const refuse = (message) => {
+      setUploadProcessing(false)
+      setUploadStep('')
+      toast.show({ message, type: 'error', duration: 9000 })
+    }
+
+    const kind = classifyUpload(file)
+    if (!kind) {
+      refuse(`NeuroNote can't read “${file.name}”. Upload a recording, a photo, or a text file.`)
+      return
+    }
+    if (kind === 'recording' && !(getApiKey('assemblyai') && settings?.useAssemblyAI)) {
+      refuse('Transcribing an uploaded recording needs AssemblyAI. Add a key under Settings → Transcripts, then upload it again.')
+      return
+    }
+    if (kind === 'image' && !hasActiveApiKey()) {
+      refuse('Reading text from a photo needs an AI key. Add one under Settings → AI, then upload it again.')
+      return
+    }
+
     setUploadProcessing(true)
 
     let content = ''
     let transcriptSource = 'file'
-    const type = file.type
+    let speakers = 1
 
-    if (type.startsWith('audio/')) {
+    if (kind === 'recording') {
       transcriptSource = 'assemblyai'
-      setUploadStep('Transcribing audio...')
-      const blob = new Blob([await file.arrayBuffer()], { type })
+      setUploadStep('Transcribing the recording...')
       try {
-        const assemblyKey = getApiKey('assemblyai')
-        if (assemblyKey && settings?.useAssemblyAI) {
-          const result = await transcribeAudio(blob, { speakerLabels: diarization })
-          content = result.text
-        } else {
-          content = 'Audio upload requires AssemblyAI key for transcription.'
-        }
+        const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'application/octet-stream' })
+        const result = await transcribeAudio(blob, { speakerLabels: diarization })
+        content = result.text
+        speakers = result.speakers || 1
       } catch (e) {
-        content = 'Failed to transcribe audio: ' + e.message
+        console.error('[NeuroNote] Upload transcription failed:', e)
+        refuse(`That recording couldn't be transcribed: ${e.message}`)
+        return
       }
-    } else if (type.startsWith('image/')) {
+    } else if (kind === 'image') {
       transcriptSource = 'photo'
-      setUploadStep('Extracting text from image...')
-      const reader = new FileReader()
-      const base64 = await new Promise(resolve => {
-        reader.onload = () => resolve(reader.result)
-        reader.readAsDataURL(file)
-      })
+      setUploadStep('Reading text from the photo...')
       try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.onerror = () => reject(new Error('the file could not be read'))
+          reader.readAsDataURL(file)
+        })
         content = await extractImageText(base64, getActiveModel(settings))
       } catch (e) {
-        content = 'Failed to extract text: ' + e.message
+        console.error('[NeuroNote] Upload OCR failed:', e)
+        refuse(`The text in that photo couldn't be read: ${e.message}`)
+        return
       }
     } else {
       setUploadStep('Reading file...')
       content = applyCorrections(await file.text())
+    }
+
+    if (!content || !content.trim()) {
+      refuse(kind === 'recording' ? 'No speech was found in that recording.' : `Nothing readable was found in “${file.name}”.`)
+      return
     }
 
     const aiKeyConfigured = hasActiveApiKey()
@@ -216,7 +267,7 @@ export default function Capture({ onSaveNote, settings }) {
       flashcards: flashcardData?.flashcards || [],
       quiz: flashcardData?.quiz || [],
       photos: [],
-      speakers: 1,
+      speakers,
       tags: [],
       type: 'upload'
     }
@@ -529,7 +580,8 @@ export default function Capture({ onSaveNote, settings }) {
             type="file"
             className="hidden"
             accept=".jpg,.jpeg,.png,.webp,.mp3,.m4a,.mp4,.wav,.webm,.ogg,.aac,.txt,.md,audio/*,image/*,text/plain"
-            onChange={e => handleFileUpload(e.target.files)}
+            // Cleared afterwards so choosing the same file again still fires.
+            onChange={e => { const picked = e.target.files; handleFileUpload(picked).finally(() => { e.target.value = '' }) }}
           />
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 text-accent bg-accent/10 border border-accent/30"
             style={{ boxShadow: '0 0 24px rgba(42,168,255,0.2)' }}>

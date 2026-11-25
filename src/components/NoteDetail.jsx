@@ -34,7 +34,7 @@ function noteAsText(note) {
  * A note, opened over HOME. Since v2.8 this is the only place a note is read:
  * it opens from the list and automatically when a recording finishes.
  */
-export default function NoteDetail({ note, onBack, onUpdateNote, onDeleteNote, onOpenSettings }) {
+export default function NoteDetail({ note, onBack, onUpdateNote, onDeleteNote, onOpenSettings, onReindexNote }) {
   const toast = useToast()
 
   const handleShare = async () => {
@@ -108,7 +108,7 @@ export default function NoteDetail({ note, onBack, onUpdateNote, onDeleteNote, o
             )}
           </div>
         </div>
-        <Session note={note} onUpdateNote={onUpdateNote} onOpenSettings={onOpenSettings} />
+        <Session note={note} onUpdateNote={onUpdateNote} onOpenSettings={onOpenSettings} onReindexNote={onReindexNote} />
       </div>
     </motion.div>
   )

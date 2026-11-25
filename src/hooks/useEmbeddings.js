@@ -48,5 +48,21 @@ export default function useEmbeddings() {
     })
   }, [])
 
-  return { embeddings, isIndexing, indexNewNote, search, removeNoteEmbeddings, searchResults }
+  /**
+   * v2.8.3 — drop the index entries of notes that no longer exist. Run once
+   * at launch: deleting a note keeps its entries for the rest of the session
+   * so Undo restores it complete, and they are cleared here afterwards.
+   */
+  const pruneEmbeddings = useCallback((liveNoteIds) => {
+    const live = new Set(liveNoteIds)
+    setEmbeddings(prev => {
+      const kept = prev.filter(e => live.has(e.noteId))
+      if (kept.length === prev.length) return prev
+      console.log(`[NeuroNote] Pruned ${prev.length - kept.length} index entr${prev.length - kept.length === 1 ? 'y' : 'ies'} for deleted notes`)
+      saveEmbeddings(kept)
+      return kept
+    })
+  }, [])
+
+  return { embeddings, isIndexing, indexNewNote, search, removeNoteEmbeddings, pruneEmbeddings, searchResults }
 }

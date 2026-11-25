@@ -86,6 +86,9 @@ function LogoMark({ size = 32 }) {
   )
 }
 
+/** Set for the life of a browser tab; its absence means the app was just opened. */
+const SESSION_MARK = 'neuronote:session-started'
+
 /** Tabs that existed before v2.8 and may still arrive from a saved redirect. */
 function normalizeTab(tab) {
   if (tab === 'capture' || tab === 'system') return tab
@@ -129,16 +132,34 @@ function AppShell({ msRedirect }) {
   const [selectedNote, setSelectedNote] = useState(null)
   const [settings, setSettings] = useState({})
   const [isOnline, setIsOnline] = useState(navigator.onLine)
-  const { indexNewNote } = useEmbeddings()
+  const { indexNewNote, pruneEmbeddings } = useEmbeddings()
   const toast = useToast()
   // The toast context value is rebuilt on every toast, so the redirect notice
   // needs its own once-only latch.
   const redirectAnnounced = useRef(false)
 
   useEffect(() => {
-    setNotes(getNotes())
-    setSettings(getSettings())
-  }, [])
+    const storedNotes = getNotes()
+    setNotes(storedNotes)
+    pruneEmbeddings(storedNotes.map(n => n.id))
+
+    // v2.8.3 — best-quality mode is meant to last one sitting. It was saved
+    // with the other settings and nothing ever cleared it, so it quietly
+    // stayed on (at about twice the AI cost) for every later meeting. A
+    // sessionStorage marker tells a fresh launch from a reload or a sign-in
+    // redirect, which must not reset it mid-sitting.
+    let stored = getSettings()
+    let freshLaunch = true
+    try {
+      freshLaunch = !sessionStorage.getItem(SESSION_MARK)
+      sessionStorage.setItem(SESSION_MARK, '1')
+    } catch { /* storage unavailable: treat as a fresh launch */ }
+    if (freshLaunch && stored.flagshipMode) {
+      stored = { ...stored, flagshipMode: false }
+      saveSettings(stored)
+    }
+    setSettings(stored)
+  }, [pruneEmbeddings])
 
   // Confirm the round-trip, since the toast raised before the redirect died
   // with the old document.
@@ -288,6 +309,12 @@ function AppShell({ msRedirect }) {
     })
   }, [notes, selectedNote])
 
+  // A note whose text changed (a redone summary) is indexed again so Ask
+  // searches what the note says now.
+  const handleReindexNote = useCallback((note) => {
+    if (hasActiveApiKey()) indexNewNote(note).catch(console.error)
+  }, [indexNewNote])
+
   const handleSelectNote = useCallback((note) => {
     setSelectedNote(note)
   }, [])
@@ -316,6 +343,7 @@ function AppShell({ msRedirect }) {
         onSaveNote={handleSaveNote}
         onUpdateNote={handleUpdateNote}
         onDeleteNote={handleDeleteNote}
+        onReindexNote={handleReindexNote}
         onSelectNote={handleSelectNote}
         onCloseNote={() => setSelectedNote(null)}
         onUpdateSettings={handleUpdateSettings}
@@ -326,7 +354,7 @@ function AppShell({ msRedirect }) {
 
 function AppFrame({
   activeTab, setActiveTab, notes, selectedNote, settings, isOnline,
-  onSaveNote, onUpdateNote, onDeleteNote, onSelectNote, onCloseNote, onUpdateSettings
+  onSaveNote, onUpdateNote, onDeleteNote, onReindexNote, onSelectNote, onCloseNote, onUpdateSettings
 }) {
   // The header badge and the page glow now follow the global recorder rather
   // than a local flag, so they stay correct on every tab.
@@ -392,6 +420,7 @@ function AppFrame({
             onBack={onCloseNote}
             onUpdateNote={onUpdateNote}
             onDeleteNote={onDeleteNote}
+            onReindexNote={onReindexNote}
             onOpenSettings={() => { onCloseNote(); setActiveTab('system') }}
           />
         )}

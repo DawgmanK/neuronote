@@ -291,8 +291,10 @@ export default function Home({ notes, onSelectNote, onDeleteNote, onNavigate }) 
         </div>
       ) : (
         <div className="space-y-6">
-          {groups.map(group => (
-            <section key={group.label}>
+          {groups.map((group, groupIndex) => (
+            // Label plus position: the same label can come round twice when
+            // stored notes are not strictly newest-first.
+            <section key={`${group.label}-${groupIndex}`}>
               <h2 className="section-label mb-2.5">{group.label}</h2>
               <motion.div className="grid md:grid-cols-2 gap-3" layout>
                 <AnimatePresence>
